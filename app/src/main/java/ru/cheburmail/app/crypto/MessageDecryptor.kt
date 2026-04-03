@@ -6,7 +6,7 @@ import ru.cheburmail.app.crypto.model.EncryptedEnvelope
 /**
  * Decrypts messages using crypto_box_open_easy (X25519 + XSalsa20-Poly1305).
  */
-class MessageDecryptor(private val box: Box.Native) {
+open class MessageDecryptor(private val box: Box.Native) {
 
     /**
      * Decrypt an encrypted envelope.
@@ -17,7 +17,7 @@ class MessageDecryptor(private val box: Box.Native) {
      * @return decrypted plaintext bytes
      * @throws CryptoException on invalid key sizes, authentication failure, or decryption error
      */
-    fun decrypt(
+    open fun decrypt(
         envelope: EncryptedEnvelope,
         senderPublicKey: ByteArray,
         recipientPrivateKey: ByteArray

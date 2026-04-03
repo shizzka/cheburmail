@@ -44,6 +44,10 @@ android {
         compose = true
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     room {
         schemaDirectory("$projectDir/schemas")
     }
@@ -94,8 +98,13 @@ dependencies {
     // Serialization
     implementation(libs.serialization.json)
 
+    // JavaMail for Android
+    implementation(libs.android.mail)
+    implementation(libs.android.activation)
+
     // Test
     testImplementation(libs.junit)
+    testImplementation(libs.coroutines.test)
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.test.core)
     androidTestImplementation(libs.test.runner)
