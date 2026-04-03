@@ -1,6 +1,7 @@
 package ru.cheburmail.app.transport
 
 import android.util.Log
+import ru.cheburmail.app.account.MultiAccountManager
 import ru.cheburmail.app.crypto.CryptoException
 import ru.cheburmail.app.crypto.model.EncryptedEnvelope
 import ru.cheburmail.app.db.QueueStatus
@@ -33,7 +34,8 @@ class SendWorker(
     private val sendQueueDao: SendQueueDao,
     private val messageDao: MessageDao,
     private val contactDao: ContactDao,
-    private val emailConfig: EmailConfig
+    private val emailConfig: EmailConfig,
+    private val multiAccountManager: MultiAccountManager? = null
 ) {
 
     /**
@@ -75,6 +77,9 @@ class SendWorker(
                 return
             }
 
+            // Выбираем аккаунт: мульти-аккаунт (round-robin) или одиночный
+            val sendConfig = multiAccountManager?.getNextSendAccount() ?: emailConfig
+
             // The encrypted payload is already stored in send_queue.
             // Parse it as EncryptedEnvelope and format + send via SMTP.
             val envelope = EncryptedEnvelope.fromBytes(entry.encryptedPayload)
@@ -82,11 +87,14 @@ class SendWorker(
                 envelope = envelope,
                 chatId = message.chatId,
                 msgUuid = message.id,
-                fromEmail = emailConfig.email,
+                fromEmail = sendConfig.email,
                 toEmail = entry.recipientEmail
             )
 
-            smtpClient.send(emailConfig, emailMessage)
+            smtpClient.send(sendConfig, emailMessage)
+
+            // Фиксируем отправку для rate limit tracking
+            multiAccountManager?.recordSend(sendConfig.email)
 
             // Success
             sendQueueDao.updateStatus(entry.id, QueueStatus.SENT)
