@@ -1,3 +1,21 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+/app/build
+/app/schemas
+*.hprof
+
 # GSD autopilot (transient files)
 .planning/autopilot.sh
 .planning/autopilot.lock
