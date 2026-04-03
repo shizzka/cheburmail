@@ -7,6 +7,10 @@ import ru.cheburmail.app.db.MessageStatus
 import ru.cheburmail.app.db.dao.ContactDao
 import ru.cheburmail.app.db.dao.MessageDao
 import ru.cheburmail.app.db.entity.MessageEntity
+import ru.cheburmail.app.group.ControlMessage
+import ru.cheburmail.app.group.ControlMessageHandler
+import ru.cheburmail.app.messaging.DeliveryReceiptHandler
+import ru.cheburmail.app.messaging.DeliveryReceiptSender
 
 /**
  * Polls IMAP, parses incoming CheburMail messages,
@@ -30,7 +34,9 @@ class ReceiveWorker(
     private val retryStrategy: RetryStrategy,
     private val messageDao: MessageDao,
     private val contactDao: ContactDao,
-    private val recipientPrivateKey: ByteArray
+    private val recipientPrivateKey: ByteArray,
+    private val deliveryReceiptSender: DeliveryReceiptSender? = null,
+    private val deliveryReceiptHandler: DeliveryReceiptHandler? = null
 ) {
 
     /**
@@ -55,6 +61,16 @@ class ReceiveWorker(
 
         for (msg in parsed) {
             try {
+                // Проверяем, является ли сообщение ACK (подтверждением доставки)
+                if (DeliveryReceiptSender.isAckSubject(
+                    "${EmailMessage.SUBJECT_PREFIX}${msg.chatId}/${msg.msgUuid}"
+                )) {
+                    val ackSubject = "${EmailMessage.SUBJECT_PREFIX}${msg.chatId}/${msg.msgUuid}"
+                    deliveryReceiptHandler?.handleAck(ackSubject)
+                    Log.d(TAG, "Processed ACK: ${msg.msgUuid}")
+                    continue
+                }
+
                 // Deduplication check BEFORE decryption — saves CPU
                 if (messageDao.existsById(msg.msgUuid)) {
                     Log.d(TAG, "Duplicate message ${msg.msgUuid}, skipping")
@@ -90,6 +106,20 @@ class ReceiveWorker(
                 savedCount++
 
                 Log.i(TAG, "Saved new message ${msg.msgUuid} from ${msg.fromEmail}")
+
+                // Отправляем ACK (подтверждение доставки) обратно отправителю
+                try {
+                    deliveryReceiptSender?.sendAck(
+                        config = config,
+                        chatId = msg.chatId,
+                        originalMsgUuid = msg.msgUuid,
+                        senderEmail = msg.fromEmail,
+                        timestamp = now
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to send delivery receipt for ${msg.msgUuid}: ${e.message}")
+                    // Не блокируем обработку остальных сообщений
+                }
 
             } catch (e: CryptoException) {
                 Log.e(TAG, "Decrypt error for message ${msg.msgUuid}: ${e.message}")

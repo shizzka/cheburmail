@@ -20,5 +20,8 @@ data class ChatEntity(
     val createdAt: Long,
 
     @ColumnInfo(name = "updated_at")
-    val updatedAt: Long
+    val updatedAt: Long,
+
+    @ColumnInfo(name = "disappear_timer_ms")
+    val disappearTimerMs: Long? = null
 )

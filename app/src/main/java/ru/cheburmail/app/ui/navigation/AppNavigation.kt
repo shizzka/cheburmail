@@ -27,6 +27,8 @@ import ru.cheburmail.app.ui.contacts.ContactsViewModel
 import ru.cheburmail.app.ui.contacts.QrCodeScreen
 import ru.cheburmail.app.ui.onboarding.OnboardingScreen
 import ru.cheburmail.app.ui.onboarding.OnboardingViewModel
+import ru.cheburmail.app.ui.settings.SettingsScreen
+import ru.cheburmail.app.ui.settings.SettingsViewModel
 import java.util.UUID
 
 /**
@@ -41,6 +43,7 @@ object Routes {
     const val CONTACT_DETAIL = "contactDetail"
     const val ADD_CONTACT = "addContact"
     const val QR_CODE = "qrCode"
+    const val SETTINGS = "settings"
 
     fun chat(chatId: String) = "chat/$chatId"
 }
@@ -71,6 +74,7 @@ fun AppNavigation(
         keyStorage = keyStorage
     )
     val chatListViewModel = ChatListViewModel(database.chatDao())
+    val settingsViewModel = SettingsViewModel(accountRepository)
 
     NavHost(
         navController = navController,
@@ -167,6 +171,16 @@ fun AppNavigation(
             QrCodeScreen(
                 keyStorage = keyStorage,
                 email = email,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                viewModel = settingsViewModel,
+                onAddAccount = {
+                    navController.navigate(Routes.ONBOARDING)
+                },
                 onBack = { navController.popBackStack() }
             )
         }
