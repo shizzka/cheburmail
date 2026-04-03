@@ -80,6 +80,7 @@ dependencies {
 
     // DataStore
     implementation(libs.datastore.preferences)
+    implementation(libs.datastore.core)
 
     // Crypto
     implementation(libs.lazysodium.android)
@@ -92,4 +93,12 @@ dependencies {
 
     // Serialization
     implementation(libs.serialization.json)
+
+    // Test
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.test.runner)
+    androidTestImplementation(libs.test.rules)
+    androidTestImplementation(libs.test.ext.junit)
+    androidTestImplementation(libs.coroutines.test)
 }
