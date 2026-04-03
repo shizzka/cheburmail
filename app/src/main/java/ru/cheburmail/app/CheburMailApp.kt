@@ -1,12 +1,32 @@
 package ru.cheburmail.app
 
 import android.app.Application
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import ru.cheburmail.app.notification.NotificationHelper
 import ru.cheburmail.app.storage.EncryptedDataStoreFactory
+import ru.cheburmail.app.sync.SyncManager
 
 class CheburMailApp : Application() {
+
+    lateinit var syncManager: SyncManager
+        private set
+
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()
         EncryptedDataStoreFactory.initTink()
+
+        // Создание каналов уведомлений
+        NotificationHelper(this).createNotificationChannels()
+
+        // Инициализация фоновой синхронизации
+        syncManager = SyncManager(this)
+        appScope.launch {
+            syncManager.initialize()
+        }
     }
 }

@@ -1,0 +1,147 @@
+package ru.cheburmail.app.sync
+
+import android.content.Context
+import android.util.Log
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
+import ru.cheburmail.app.crypto.MessageDecryptor
+import ru.cheburmail.app.db.CheburMailDatabase
+import ru.cheburmail.app.repository.AccountRepository
+import ru.cheburmail.app.transport.EmailFormatter
+import ru.cheburmail.app.transport.EmailParser
+import ru.cheburmail.app.transport.ImapClient
+import ru.cheburmail.app.transport.ReceiveWorker
+import ru.cheburmail.app.transport.RetryStrategy
+import ru.cheburmail.app.transport.SendWorker
+import ru.cheburmail.app.transport.SmtpClient
+import ru.cheburmail.app.transport.TransportService
+import ru.cheburmail.app.crypto.MessageEncryptor
+import ru.cheburmail.app.storage.SecureKeyStorage
+import java.util.concurrent.TimeUnit
+
+/**
+ * Периодический WorkManager worker для фоновой синхронизации.
+ *
+ * Выполняется каждые 15 минут при наличии сети:
+ * 1. Получение новых сообщений (ReceiveWorker.pollAndProcess)
+ * 2. Отправка очереди (SendWorker.processQueue)
+ *
+ * Политика: KEEP — не создавать дубликаты, если уже запланирован.
+ */
+class PeriodicSyncWorker(
+    context: Context,
+    params: WorkerParameters
+) : CoroutineWorker(context, params) {
+
+    override suspend fun doWork(): Result {
+        Log.d(TAG, "Периодическая синхронизация запущена")
+
+        val accountRepo = AccountRepository.create(applicationContext)
+        val config = accountRepo.getActive()
+        if (config == null) {
+            Log.w(TAG, "Нет активного аккаунта, пропускаем синхронизацию")
+            return Result.success()
+        }
+
+        val db = CheburMailDatabase.getInstance(applicationContext)
+        val keyStorage = SecureKeyStorage.create(applicationContext)
+        val keyData = keyStorage.load()
+        if (keyData == null) {
+            Log.w(TAG, "Нет ключей, пропускаем синхронизацию")
+            return Result.success()
+        }
+
+        try {
+            // Получение входящих
+            val imapClient = ImapClient()
+            val emailParser = EmailParser()
+            val emailFormatter = EmailFormatter()
+            val smtpClient = SmtpClient()
+            val retryStrategy = RetryStrategy()
+
+            // Для создания TransportService нужны encryptor/decryptor
+            // но ReceiveWorker использует свой decryptor напрямую
+            val transportService = TransportService(
+                smtpClient = smtpClient,
+                imapClient = imapClient,
+                emailFormatter = emailFormatter,
+                emailParser = emailParser,
+                encryptor = null,
+                decryptor = null
+            )
+
+            val receiveWorker = ReceiveWorker(
+                transportService = transportService,
+                decryptor = MessageDecryptor.create(),
+                retryStrategy = retryStrategy,
+                messageDao = db.messageDao(),
+                contactDao = db.contactDao(),
+                recipientPrivateKey = keyData.privateKey
+            )
+
+            val received = receiveWorker.pollAndProcess(config)
+            Log.i(TAG, "Получено $received новых сообщений")
+
+            // Отправка очереди
+            val sendWorker = SendWorker(
+                smtpClient = smtpClient,
+                emailFormatter = emailFormatter,
+                retryStrategy = retryStrategy,
+                sendQueueDao = db.sendQueueDao(),
+                messageDao = db.messageDao(),
+                contactDao = db.contactDao(),
+                emailConfig = config
+            )
+
+            sendWorker.processQueue()
+            Log.i(TAG, "Очередь отправки обработана")
+
+            return Result.success()
+        } catch (e: Exception) {
+            Log.e(TAG, "Ошибка синхронизации: ${e.message}")
+            return Result.retry()
+        }
+    }
+
+    companion object {
+        private const val TAG = "PeriodicSyncWorker"
+        const val WORK_NAME = "cheburmail_periodic_sync"
+
+        /**
+         * Запланировать периодическую синхронизацию.
+         * Минимальный интервал WorkManager — 15 минут.
+         */
+        fun schedule(context: Context) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+
+            val request = PeriodicWorkRequestBuilder<PeriodicSyncWorker>(
+                15, TimeUnit.MINUTES
+            )
+                .setConstraints(constraints)
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                request
+            )
+
+            Log.i(TAG, "Периодическая синхронизация запланирована (15 мин)")
+        }
+
+        /**
+         * Отменить периодическую синхронизацию.
+         */
+        fun cancel(context: Context) {
+            WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+            Log.i(TAG, "Периодическая синхронизация отменена")
+        }
+    }
+}
