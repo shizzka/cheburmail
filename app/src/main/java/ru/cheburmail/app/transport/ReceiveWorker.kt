@@ -36,7 +36,8 @@ class ReceiveWorker(
     private val contactDao: ContactDao,
     private val recipientPrivateKey: ByteArray,
     private val deliveryReceiptSender: DeliveryReceiptSender? = null,
-    private val deliveryReceiptHandler: DeliveryReceiptHandler? = null
+    private val deliveryReceiptHandler: DeliveryReceiptHandler? = null,
+    private val controlMessageHandler: ControlMessageHandler? = null
 ) {
 
     /**
@@ -68,6 +69,22 @@ class ReceiveWorker(
                     val ackSubject = "${EmailMessage.SUBJECT_PREFIX}${msg.chatId}/${msg.msgUuid}"
                     deliveryReceiptHandler?.handleAck(ackSubject)
                     Log.d(TAG, "Processed ACK: ${msg.msgUuid}")
+                    continue
+                }
+
+                // Проверяем, является ли сообщение управляющим (групповые чаты)
+                val fullSubject = "${EmailMessage.SUBJECT_PREFIX}${msg.chatId}/${msg.msgUuid}"
+                if (ControlMessage.isControlSubject(fullSubject)) {
+                    val contact = contactDao.getByEmail(msg.fromEmail)
+                    if (contact != null) {
+                        val plaintext = decryptor.decrypt(
+                            msg.envelope,
+                            contact.publicKey,
+                            recipientPrivateKey
+                        )
+                        controlMessageHandler?.handle(String(plaintext, Charsets.UTF_8))
+                        Log.d(TAG, "Processed control message: ${msg.msgUuid}")
+                    }
                     continue
                 }
 
