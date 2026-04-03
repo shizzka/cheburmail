@@ -6,7 +6,7 @@ import ru.cheburmail.app.crypto.model.EncryptedEnvelope
 /**
  * Encrypts messages using crypto_box_easy (X25519 + XSalsa20-Poly1305).
  */
-class MessageEncryptor(
+open class MessageEncryptor(
     private val box: Box.Native,
     private val nonceGenerator: NonceGenerator
 ) {

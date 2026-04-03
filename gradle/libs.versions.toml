@@ -21,6 +21,8 @@ jna = "5.14.0"
 tink-android = "1.8.0"
 coroutines = "1.10.2"
 serialization = "1.8.1"
+android-mail = "1.6.2"
+android-activation = "1.6.2"
 
 [libraries]
 # Compose BOM
@@ -72,6 +74,10 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 # Serialization
 serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
+
+# JavaMail for Android
+android-mail = { group = "com.sun.mail", name = "android-mail", version.ref = "android-mail" }
+android-activation = { group = "com.sun.mail", name = "android-activation", version.ref = "android-activation" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
