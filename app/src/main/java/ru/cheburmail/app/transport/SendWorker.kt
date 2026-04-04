@@ -4,6 +4,7 @@ import android.util.Log
 import ru.cheburmail.app.account.MultiAccountManager
 import ru.cheburmail.app.crypto.CryptoException
 import ru.cheburmail.app.crypto.model.EncryptedEnvelope
+import ru.cheburmail.app.db.MessageStatus
 import ru.cheburmail.app.db.QueueStatus
 import ru.cheburmail.app.db.dao.ContactDao
 import ru.cheburmail.app.db.dao.MessageDao
@@ -98,6 +99,7 @@ class SendWorker(
 
             // Success
             sendQueueDao.updateStatus(entry.id, QueueStatus.SENT)
+            messageDao.updateStatus(msgId, MessageStatus.SENT)
             Log.i(TAG, "Message $msgId sent successfully")
 
         } catch (e: CryptoException) {

@@ -30,7 +30,8 @@ enum class MessageStatus {
     SENT,
     DELIVERED,
     FAILED,
-    RECEIVED
+    RECEIVED,
+    READ
 }
 
 /**

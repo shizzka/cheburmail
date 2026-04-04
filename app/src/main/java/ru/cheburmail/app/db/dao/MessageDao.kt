@@ -43,4 +43,16 @@ interface MessageDao {
      */
     @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE id = :id)")
     suspend fun existsById(id: String): Boolean
+
+    @Query("SELECT * FROM messages ORDER BY timestamp DESC")
+    suspend fun getAllOnce(): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE chat_id = :chatId ORDER BY timestamp ASC")
+    suspend fun getForChatOnce(chatId: String): List<MessageEntity>
+
+    /**
+     * Пометить все входящие RECEIVED сообщения в чате как READ.
+     */
+    @Query("UPDATE messages SET status = 'READ' WHERE chat_id = :chatId AND status = 'RECEIVED' AND is_outgoing = 0")
+    suspend fun markChatAsRead(chatId: String)
 }

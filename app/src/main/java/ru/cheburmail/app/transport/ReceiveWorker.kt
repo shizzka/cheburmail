@@ -3,14 +3,18 @@ package ru.cheburmail.app.transport
 import android.util.Log
 import ru.cheburmail.app.crypto.CryptoException
 import ru.cheburmail.app.crypto.MessageDecryptor
+import ru.cheburmail.app.db.ChatType
 import ru.cheburmail.app.db.MessageStatus
+import ru.cheburmail.app.db.dao.ChatDao
 import ru.cheburmail.app.db.dao.ContactDao
 import ru.cheburmail.app.db.dao.MessageDao
+import ru.cheburmail.app.db.entity.ChatEntity
 import ru.cheburmail.app.db.entity.MessageEntity
 import ru.cheburmail.app.group.ControlMessage
 import ru.cheburmail.app.group.ControlMessageHandler
 import ru.cheburmail.app.messaging.DeliveryReceiptHandler
 import ru.cheburmail.app.messaging.DeliveryReceiptSender
+import ru.cheburmail.app.notification.NotificationHelper
 
 /**
  * Polls IMAP, parses incoming CheburMail messages,
@@ -34,6 +38,8 @@ class ReceiveWorker(
     private val retryStrategy: RetryStrategy,
     private val messageDao: MessageDao,
     private val contactDao: ContactDao,
+    private val chatDao: ChatDao? = null,
+    private val notificationHelper: NotificationHelper? = null,
     private val recipientPrivateKey: ByteArray,
     private val deliveryReceiptSender: DeliveryReceiptSender? = null,
     private val deliveryReceiptHandler: DeliveryReceiptHandler? = null,
@@ -108,8 +114,23 @@ class ReceiveWorker(
                     recipientPrivateKey
                 )
 
-                // Save to Room
+                // Ensure chat exists before saving message (FK constraint)
                 val now = System.currentTimeMillis()
+                if (chatDao != null) {
+                    val existingChat = chatDao.getById(msg.chatId)
+                    if (existingChat == null) {
+                        chatDao.insert(ChatEntity(
+                            id = msg.chatId,
+                            type = ChatType.DIRECT,
+                            title = contact.displayName,
+                            createdAt = now,
+                            updatedAt = now
+                        ))
+                        Log.d(TAG, "Created chat ${msg.chatId} for ${contact.email}")
+                    }
+                }
+
+                // Save to Room
                 val entity = MessageEntity(
                     id = msg.msgUuid,
                     chatId = msg.chatId,
@@ -123,6 +144,13 @@ class ReceiveWorker(
                 savedCount++
 
                 Log.i(TAG, "Saved new message ${msg.msgUuid} from ${msg.fromEmail}")
+
+                // Show notification
+                notificationHelper?.showMessageNotification(
+                    senderName = contact.displayName,
+                    preview = String(plaintext, Charsets.UTF_8).take(100),
+                    chatId = msg.chatId
+                )
 
                 // Отправляем ACK (подтверждение доставки) обратно отправителю
                 try {

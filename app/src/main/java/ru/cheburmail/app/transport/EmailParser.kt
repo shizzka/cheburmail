@@ -72,7 +72,8 @@ class EmailParser(
          * Default Base64 decoder using java.util.Base64 (works on Android 26+ and JVM).
          */
         private fun defaultBase64Decode(data: ByteArray): ByteArray {
-            return java.util.Base64.getDecoder().decode(data)
+            // MIME decoder handles line breaks (\r\n) added by mail transport
+            return java.util.Base64.getMimeDecoder().decode(data)
         }
     }
 }

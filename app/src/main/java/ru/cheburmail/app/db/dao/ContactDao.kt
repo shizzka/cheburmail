@@ -24,6 +24,9 @@ interface ContactDao {
     @Query("SELECT * FROM contacts ORDER BY display_name ASC")
     fun getAll(): Flow<List<ContactEntity>>
 
+    @Query("SELECT * FROM contacts ORDER BY display_name ASC")
+    suspend fun getAllOnce(): List<ContactEntity>
+
     @Update
     suspend fun update(contact: ContactEntity)
 

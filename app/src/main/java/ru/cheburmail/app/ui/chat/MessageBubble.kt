@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import ru.cheburmail.app.db.MessageStatus
 import ru.cheburmail.app.db.entity.MessageEntity
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -39,14 +40,20 @@ fun MessageBubble(
         RoundedCornerShape(16.dp, 16.dp, 16.dp, 4.dp)
     }
 
+    val isNew = !isOutgoing && message.status == MessageStatus.RECEIVED
+
     val bubbleColor = if (isOutgoing) {
         MaterialTheme.colorScheme.primaryContainer
+    } else if (isNew) {
+        MaterialTheme.colorScheme.tertiaryContainer
     } else {
         MaterialTheme.colorScheme.surfaceVariant
     }
 
     val textColor = if (isOutgoing) {
         MaterialTheme.colorScheme.onPrimaryContainer
+    } else if (isNew) {
+        MaterialTheme.colorScheme.onTertiaryContainer
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }

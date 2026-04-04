@@ -29,6 +29,10 @@ import ru.cheburmail.app.ui.onboarding.OnboardingScreen
 import ru.cheburmail.app.ui.onboarding.OnboardingViewModel
 import ru.cheburmail.app.ui.settings.SettingsScreen
 import ru.cheburmail.app.ui.settings.SettingsViewModel
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import java.util.UUID
 
 /**
@@ -117,7 +121,11 @@ fun AppNavigation(
             val chatViewModel = ChatViewModel(
                 chatId = chatId,
                 messageDao = database.messageDao(),
-                chatDao = database.chatDao()
+                chatDao = database.chatDao(),
+                contactDao = database.contactDao(),
+                sendQueueDao = database.sendQueueDao(),
+                keyStorage = keyStorage,
+                appContext = navController.context.applicationContext
             )
             ChatScreen(
                 viewModel = chatViewModel,
@@ -166,13 +174,18 @@ fun AppNavigation(
         }
 
         composable(Routes.QR_CODE) {
-            // email берём из первого сохранённого аккаунта
-            val email = "user@example.com" // TODO: получать из AccountRepository
-            QrCodeScreen(
-                keyStorage = keyStorage,
-                email = email,
-                onBack = { navController.popBackStack() }
-            )
+            var email by remember { mutableStateOf("") }
+            LaunchedEffect(Unit) {
+                val config = accountRepository.getActive()
+                email = config?.email ?: ""
+            }
+            if (email.isNotEmpty()) {
+                QrCodeScreen(
+                    keyStorage = keyStorage,
+                    email = email,
+                    onBack = { navController.popBackStack() }
+                )
+            }
         }
 
         composable(Routes.SETTINGS) {

@@ -1,7 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.room)
 }
@@ -10,14 +10,37 @@ android {
     namespace = "ru.cheburmail.app"
     compileSdk = 35
 
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
+        }
+    }
+
     defaultConfig {
         applicationId = "ru.cheburmail.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
 
     buildTypes {
@@ -34,10 +57,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
     }
 
     buildFeatures {
@@ -86,9 +105,23 @@ dependencies {
     implementation(libs.datastore.preferences)
     implementation(libs.datastore.core)
 
+    // WorkManager
+    implementation(libs.work.runtime.ktx)
+
+    // ZXing
+    implementation(libs.zxing.core)
+
+    // Google Code Scanner
+    implementation(libs.play.code.scanner)
+
     // Crypto
-    implementation(libs.lazysodium.android)
-    implementation(libs.jna) { artifact { type = "aar" } }
+    implementation(libs.lazysodium.android) {
+        exclude(group = "net.java.dev.jna", module = "jna")
+    }
+    implementation(libs.jna) {
+        artifact { type = "aar" }
+        exclude(group = "net.java.dev.jna", module = "jna")
+    }
     implementation(libs.tink.android)
 
     // Coroutines
