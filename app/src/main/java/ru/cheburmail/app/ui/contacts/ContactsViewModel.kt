@@ -9,12 +9,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import ru.cheburmail.app.crypto.CryptoProvider
 import ru.cheburmail.app.crypto.FingerprintGenerator
 import ru.cheburmail.app.crypto.QrCodeParser
 import ru.cheburmail.app.db.TrustStatus
 import ru.cheburmail.app.db.dao.ContactDao
 import ru.cheburmail.app.db.entity.ContactEntity
+import ru.cheburmail.app.messaging.KeyExchangeManager
+import ru.cheburmail.app.repository.AccountRepository
 import ru.cheburmail.app.storage.SecureKeyStorage
+import ru.cheburmail.app.transport.SmtpClient
 
 /**
  * ViewModel управления контактами.
@@ -22,7 +26,8 @@ import ru.cheburmail.app.storage.SecureKeyStorage
  */
 class ContactsViewModel(
     private val contactDao: ContactDao,
-    private val keyStorage: SecureKeyStorage
+    private val keyStorage: SecureKeyStorage,
+    private val accountRepository: AccountRepository? = null
 ) : ViewModel() {
 
     val contacts: StateFlow<List<ContactEntity>> = contactDao.getAll()
@@ -137,18 +142,66 @@ class ContactsViewModel(
         }
     }
 
+    /**
+     * Добавить контакт по email — отправляет key exchange запрос.
+     * Контакт появится после ответа второй стороны.
+     */
+    private val _keyExchangeSent = MutableStateFlow(false)
+    val keyExchangeSent: StateFlow<Boolean> = _keyExchangeSent.asStateFlow()
+
+    fun addContactByEmail(targetEmail: String) {
+        _addContactError.value = null
+        _addContactSuccess.value = false
+        _keyExchangeSent.value = false
+
+        viewModelScope.launch {
+            try {
+                // Проверяем, не добавлен ли уже
+                val existing = contactDao.getByEmail(targetEmail)
+                if (existing != null) {
+                    _addContactError.value = "Контакт $targetEmail уже существует"
+                    return@launch
+                }
+
+                val config = accountRepository?.getActive()
+                    ?: throw IllegalStateException("Нет активного аккаунта")
+
+                if (targetEmail == config.email) {
+                    _addContactError.value = "Нельзя добавить самого себя"
+                    return@launch
+                }
+
+                val keyExchangeManager = KeyExchangeManager(
+                    smtpClient = SmtpClient(),
+                    contactDao = contactDao,
+                    keyStorage = keyStorage
+                )
+
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    keyExchangeManager.sendKeyExchange(config, targetEmail)
+                }
+
+                _keyExchangeSent.value = true
+            } catch (e: Exception) {
+                _addContactError.value = "Ошибка отправки: ${e.message}"
+            }
+        }
+    }
+
     fun clearAddContactState() {
         _addContactError.value = null
         _addContactSuccess.value = false
+        _keyExchangeSent.value = false
     }
 
     class Factory(
         private val contactDao: ContactDao,
-        private val keyStorage: SecureKeyStorage
+        private val keyStorage: SecureKeyStorage,
+        private val accountRepository: AccountRepository? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return ContactsViewModel(contactDao, keyStorage) as T
+            return ContactsViewModel(contactDao, keyStorage, accountRepository) as T
         }
     }
 }

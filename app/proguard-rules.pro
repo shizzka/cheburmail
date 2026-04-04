@@ -25,3 +25,29 @@
 -keep @androidx.room.Entity class * { *; }
 -keep @androidx.room.Dao interface * { *; }
 -dontwarn androidx.room.**
+
+# ---- Kotlinx Serialization ----
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.AnnotationsKt
+-keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
+-keepclasseswithmembers class kotlinx.serialization.json.** { kotlinx.serialization.KSerializer serializer(...); }
+-keep,includedescriptorclasses class ru.cheburmail.app.**$$serializer { *; }
+-keepclassmembers class ru.cheburmail.app.** { *** Companion; }
+-keepclasseswithmembers class ru.cheburmail.app.** { kotlinx.serialization.KSerializer serializer(...); }
+
+# ---- WorkManager ----
+-keep class * extends androidx.work.Worker { *; }
+-keep class * extends androidx.work.ListenableWorker { *; }
+
+# ---- Google Play Services (Code Scanner) ----
+-keep class com.google.mlkit.** { *; }
+-dontwarn com.google.mlkit.**
+-keep class com.google.android.gms.** { *; }
+-dontwarn com.google.android.gms.**
+
+# ---- ZXing ----
+-keep class com.google.zxing.** { *; }
+-dontwarn com.google.zxing.**
+
+# ---- Enums ----
+-keepclassmembers enum * { *; }

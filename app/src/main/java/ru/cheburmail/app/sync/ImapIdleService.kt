@@ -29,6 +29,7 @@ import ru.cheburmail.app.transport.ReceiveWorker
 import ru.cheburmail.app.transport.RetryStrategy
 import ru.cheburmail.app.transport.SmtpClient
 import ru.cheburmail.app.transport.TransportService
+import ru.cheburmail.app.messaging.KeyExchangeManager
 import java.util.Properties
 import javax.mail.Folder
 import javax.mail.Session
@@ -212,6 +213,12 @@ class ImapIdleService : Service() {
                     decryptor = MessageDecryptor(ls)
                 )
 
+                val keyExchangeManager = KeyExchangeManager(
+                    smtpClient = SmtpClient(),
+                    contactDao = db.contactDao(),
+                    keyStorage = keyStorage
+                )
+
                 val receiveWorker = ReceiveWorker(
                     transportService = transportService,
                     decryptor = MessageDecryptor(ls),
@@ -220,7 +227,9 @@ class ImapIdleService : Service() {
                     contactDao = db.contactDao(),
                     chatDao = db.chatDao(),
                     notificationHelper = NotificationHelper(applicationContext),
-                    recipientPrivateKey = keyPair.getPrivateKey()
+                    recipientPrivateKey = keyPair.getPrivateKey(),
+                    keyExchangeManager = keyExchangeManager,
+                    emailConfig = config
                 )
 
                 val received = receiveWorker.pollAndProcess(config)

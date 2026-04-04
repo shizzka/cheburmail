@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
@@ -18,11 +19,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,8 +40,7 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 
 /**
- * Экран добавления контакта через QR-код.
- * Использует Google Code Scanner (ML Kit) — не требует разрешения камеры.
+ * Экран добавления контакта: по email (key exchange) или через QR-код.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,21 +51,14 @@ fun AddContactScreen(
 ) {
     val error by viewModel.addContactError.collectAsState()
     val success by viewModel.addContactSuccess.collectAsState()
+    val keyExchangeSent by viewModel.keyExchangeSent.collectAsState()
     val context = LocalContext.current
-    var scannerLaunched by remember { mutableStateOf(false) }
-
-    // Автоматически запускаем сканер при открытии экрана
-    LaunchedEffect(Unit) {
-        if (!scannerLaunched) {
-            scannerLaunched = true
-            launchScanner(context, viewModel, onScanResult)
-        }
-    }
+    var emailInput by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Сканировать QR-код") },
+                title = { Text("Добавить контакт") },
                 navigationIcon = {
                     IconButton(onClick = {
                         viewModel.clearAddContactState()
@@ -82,7 +76,8 @@ fun AddContactScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
+                .padding(innerPadding)
+                .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             when {
@@ -115,6 +110,36 @@ fun AddContactScreen(
                     Spacer(modifier = Modifier.weight(1f))
                 }
 
+                keyExchangeSent -> {
+                    Spacer(modifier = Modifier.weight(1f))
+                    Icon(
+                        imageVector = Icons.Default.Email,
+                        contentDescription = null,
+                        modifier = Modifier.size(80.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Запрос отправлен!",
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Когда собеседник откроет CheburMail, контакт добавится автоматически.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(32.dp))
+                    Button(onClick = {
+                        viewModel.clearAddContactState()
+                        onBack()
+                    }) {
+                        Text("Готово")
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+
                 error != null -> {
                     Spacer(modifier = Modifier.weight(1f))
                     Icon(
@@ -127,13 +152,11 @@ fun AddContactScreen(
                     Text(
                         text = error ?: "",
                         style = MaterialTheme.typography.bodyLarge,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 24.dp)
+                        textAlign = TextAlign.Center
                     )
                     Spacer(modifier = Modifier.height(32.dp))
                     Button(onClick = {
                         viewModel.clearAddContactState()
-                        scannerLaunched = false
                     }) {
                         Text("Попробовать снова")
                     }
@@ -141,31 +164,73 @@ fun AddContactScreen(
                 }
 
                 else -> {
-                    Spacer(modifier = Modifier.weight(1f))
-                    Icon(
-                        imageVector = Icons.Default.QrCodeScanner,
-                        contentDescription = null,
-                        modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    Spacer(modifier = Modifier.height(32.dp))
+
+                    // Email input
+                    Text(
+                        text = "Введите email собеседника",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = emailInput,
+                        onValueChange = { emailInput = it.trim() },
+                        label = { Text("Email") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "Наведите камеру на QR-код",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Spacer(modifier = Modifier.height(24.dp))
                     Button(
                         onClick = {
-                            scannerLaunched = true
+                            if (emailInput.contains("@") && emailInput.contains(".")) {
+                                viewModel.addContactByEmail(emailInput)
+                            }
+                        },
+                        enabled = emailInput.contains("@") && emailInput.contains("."),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Email,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Text("Отправить запрос")
+                    }
+
+                    Spacer(modifier = Modifier.height(32.dp))
+
+                    // Divider
+                    Text(
+                        text = "или",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(32.dp))
+
+                    // QR scanner
+                    OutlinedButton(
+                        onClick = {
                             launchScanner(context, viewModel, onScanResult)
                         },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 48.dp)
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("Открыть сканер")
+                        Icon(
+                            imageVector = Icons.Default.QrCodeScanner,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Text("Сканировать QR-код")
                     }
-                    Spacer(modifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "QR-код подтверждает ключ при личной встрече",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
         }

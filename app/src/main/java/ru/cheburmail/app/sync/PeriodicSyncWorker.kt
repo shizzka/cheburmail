@@ -25,6 +25,7 @@ import ru.cheburmail.app.transport.RetryStrategy
 import ru.cheburmail.app.transport.SendWorker
 import ru.cheburmail.app.transport.SmtpClient
 import ru.cheburmail.app.transport.TransportService
+import ru.cheburmail.app.messaging.KeyExchangeManager
 import java.util.concurrent.TimeUnit
 
 /**
@@ -77,6 +78,12 @@ class PeriodicSyncWorker(
                 decryptor = decryptor
             )
 
+            val keyExchangeManager = KeyExchangeManager(
+                smtpClient = smtpClient,
+                contactDao = db.contactDao(),
+                keyStorage = keyStorage
+            )
+
             val receiveWorker = ReceiveWorker(
                 transportService = transportService,
                 decryptor = decryptor,
@@ -85,7 +92,9 @@ class PeriodicSyncWorker(
                 contactDao = db.contactDao(),
                 chatDao = db.chatDao(),
                 notificationHelper = ru.cheburmail.app.notification.NotificationHelper(applicationContext),
-                recipientPrivateKey = keyPair.getPrivateKey()
+                recipientPrivateKey = keyPair.getPrivateKey(),
+                keyExchangeManager = keyExchangeManager,
+                emailConfig = config
             )
 
             val received = receiveWorker.pollAndProcess(config)
