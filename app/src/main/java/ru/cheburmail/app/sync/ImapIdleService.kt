@@ -12,12 +12,24 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import ru.cheburmail.app.crypto.CryptoProvider
+import ru.cheburmail.app.crypto.KeyPairGenerator
+import ru.cheburmail.app.crypto.MessageDecryptor
+import ru.cheburmail.app.crypto.MessageEncryptor
+import ru.cheburmail.app.crypto.NonceGenerator
+import ru.cheburmail.app.db.CheburMailDatabase
 import ru.cheburmail.app.notification.NotificationHelper
+import ru.cheburmail.app.repository.AccountRepository
+import ru.cheburmail.app.storage.SecureKeyStorage
 import ru.cheburmail.app.transport.EmailConfig
+import ru.cheburmail.app.transport.EmailFormatter
+import ru.cheburmail.app.transport.EmailParser
 import ru.cheburmail.app.transport.ImapClient
-import ru.cheburmail.app.transport.TransportException
+import ru.cheburmail.app.transport.ReceiveWorker
+import ru.cheburmail.app.transport.RetryStrategy
+import ru.cheburmail.app.transport.SmtpClient
+import ru.cheburmail.app.transport.TransportService
 import java.util.Properties
-import javax.mail.Flags
 import javax.mail.Folder
 import javax.mail.Session
 import javax.mail.Store
@@ -141,38 +153,82 @@ class ImapIdleService : Service() {
         newStore.connect(imapHost, email, password)
         store = newStore
 
-        val cheburFolder = newStore.getFolder(ImapClient.CHEBURMAIL_FOLDER)
-        if (!cheburFolder.exists()) {
-            Log.w(TAG, "Папка ${ImapClient.CHEBURMAIL_FOLDER} не найдена")
-            newStore.close()
-            return
-        }
+        // Запускаем синхронизацию при подключении
+        triggerSync()
 
-        cheburFolder.open(Folder.READ_ONLY)
-        folder = cheburFolder
+        // IDLE на INBOX — новые письма приходят именно сюда
+        // (ImapClient.fetchMessages() сам перемещает CM/1/ в CheburMail)
+        val inbox = newStore.getFolder("INBOX")
+        inbox.open(Folder.READ_ONLY)
+        folder = inbox
 
-        cheburFolder.addMessageCountListener(object : MessageCountAdapter() {
+        inbox.addMessageCountListener(object : MessageCountAdapter() {
             override fun messagesAdded(e: MessageCountEvent) {
-                Log.i(TAG, "IDLE: получено ${e.messages.size} новых сообщений")
+                Log.i(TAG, "IDLE: ${e.messages.size} новых сообщений в INBOX")
+                triggerSync()
                 onNewMessage?.invoke()
             }
         })
 
-        Log.i(TAG, "IMAP IDLE активен на $imapHost")
+        Log.i(TAG, "IMAP IDLE активен на $imapHost (мониторинг INBOX)")
 
-        // Вход в IDLE. Блокирует до:
+        // Вход в IDLE на INBOX. Блокирует до:
         // - нового сообщения (вызовет listener)
         // - таймаута сервера (~29 мин)
         // - разрыва соединения (бросит исключение)
-        val imapFolder = cheburFolder as? com.sun.mail.imap.IMAPFolder
+        val imapFolder = inbox as? com.sun.mail.imap.IMAPFolder
         if (imapFolder != null) {
             imapFolder.idle()
         } else {
-            // Fallback: polling каждые 2 минуты если IDLE не поддерживается
             Thread.sleep(POLL_FALLBACK_MS)
         }
 
         closeConnection()
+    }
+
+    /**
+     * Прямой запуск синхронизации (без BroadcastReceiver — MIUI блокирует broadcasts).
+     */
+    private fun triggerSync() {
+        serviceScope.launch {
+            try {
+                Log.d(TAG, "Запуск прямой синхронизации")
+                val accountRepo = AccountRepository.create(applicationContext)
+                val config = accountRepo.getActive() ?: return@launch
+
+                val db = CheburMailDatabase.getInstance(applicationContext)
+                val ls = CryptoProvider.lazySodium
+                val kpg = KeyPairGenerator(ls)
+                val keyStorage = SecureKeyStorage.create(applicationContext, kpg)
+                val keyPair = keyStorage.getOrCreateKeyPair()
+
+                val nonceGen = NonceGenerator(ls)
+                val transportService = TransportService(
+                    smtpClient = SmtpClient(),
+                    imapClient = ImapClient(),
+                    emailFormatter = EmailFormatter(),
+                    emailParser = EmailParser(),
+                    encryptor = MessageEncryptor(ls, nonceGen),
+                    decryptor = MessageDecryptor(ls)
+                )
+
+                val receiveWorker = ReceiveWorker(
+                    transportService = transportService,
+                    decryptor = MessageDecryptor(ls),
+                    retryStrategy = RetryStrategy(),
+                    messageDao = db.messageDao(),
+                    contactDao = db.contactDao(),
+                    chatDao = db.chatDao(),
+                    notificationHelper = NotificationHelper(applicationContext),
+                    recipientPrivateKey = keyPair.getPrivateKey()
+                )
+
+                val received = receiveWorker.pollAndProcess(config)
+                Log.i(TAG, "Синхронизация завершена: $received новых сообщений")
+            } catch (e: Exception) {
+                Log.e(TAG, "Ошибка синхронизации: ${e.message}")
+            }
+        }
     }
 
     private fun closeConnection() {

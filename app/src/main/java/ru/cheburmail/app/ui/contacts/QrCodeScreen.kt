@@ -51,11 +51,13 @@ fun QrCodeScreen(
 
     LaunchedEffect(email) {
         isLoading = true
-        val publicKey = keyStorage.getPublicKey()
-        if (publicKey != null) {
+        try {
+            val keyPair = keyStorage.getOrCreateKeyPair()
             qrBitmap = withContext(Dispatchers.Default) {
-                QrCodeGenerator.generate(publicKey, email)
+                QrCodeGenerator.generate(keyPair.publicKey, email)
             }
+        } catch (_: Exception) {
+            qrBitmap = null
         }
         isLoading = false
     }

@@ -16,8 +16,8 @@ interface SendQueueDao {
     /**
      * Элементы в статусе QUEUED, упорядоченные по времени создания.
      */
-    @Query("SELECT * FROM send_queue WHERE status = 'QUEUED' ORDER BY created_at ASC")
-    suspend fun getQueued(): List<SendQueueEntity>
+    @Query("SELECT * FROM send_queue WHERE status = 'QUEUED' AND (next_retry_at IS NULL OR next_retry_at <= :now) ORDER BY created_at ASC")
+    suspend fun getQueued(now: Long = System.currentTimeMillis()): List<SendQueueEntity>
 
     @Query("SELECT * FROM send_queue WHERE message_id = :messageId")
     suspend fun getByMessageId(messageId: String): List<SendQueueEntity>
@@ -59,4 +59,7 @@ interface SendQueueDao {
      */
     @Query("SELECT COUNT(*) FROM send_queue WHERE status IN ('QUEUED', 'SENDING')")
     suspend fun countPending(): Int
+
+    @Query("SELECT * FROM send_queue ORDER BY created_at DESC")
+    suspend fun getAll(): List<SendQueueEntity>
 }

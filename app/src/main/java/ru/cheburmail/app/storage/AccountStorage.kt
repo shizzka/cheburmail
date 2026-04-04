@@ -57,14 +57,20 @@ object AccountStorage {
     private const val DATASTORE_FILE = "cheburmail_accounts.pb"
     private val ASSOCIATED_DATA = "cheburmail_account_storage".toByteArray()
 
-    fun create(context: Context): DataStore<StoredAccountList> {
-        val aead = EncryptedDataStoreFactory.getAead(context)
-        val encryptedSerializer = EncryptedAccountSerializer(AccountListSerializer, aead)
+    @Volatile
+    private var instance: DataStore<StoredAccountList>? = null
 
-        return DataStoreFactory.create(
-            serializer = encryptedSerializer,
-            produceFile = { File(context.filesDir, DATASTORE_FILE) }
-        )
+    fun create(context: Context): DataStore<StoredAccountList> {
+        return instance ?: synchronized(this) {
+            instance ?: run {
+                val aead = EncryptedDataStoreFactory.getAead(context)
+                val encryptedSerializer = EncryptedAccountSerializer(AccountListSerializer, aead)
+                DataStoreFactory.create(
+                    serializer = encryptedSerializer,
+                    produceFile = { File(context.applicationContext.filesDir, DATASTORE_FILE) }
+                ).also { instance = it }
+            }
+        }
     }
 
     internal class EncryptedAccountSerializer(

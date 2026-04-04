@@ -49,6 +49,9 @@ object EncryptedDataStoreFactory {
         return keysetManager.keysetHandle.getPrimitive(Aead::class.java)
     }
 
+    @Volatile
+    private var keyDataStoreInstance: DataStore<StoredKeyData?>? = null
+
     /**
      * Creates an encrypted [DataStore] for [StoredKeyData].
      *
@@ -56,13 +59,16 @@ object EncryptedDataStoreFactory {
      * to disk and decrypted after reading.
      */
     fun create(context: Context): DataStore<StoredKeyData?> {
-        val aead = getAead(context)
-        val encryptedSerializer = EncryptedSerializer(KeyStorageSerializer, aead)
-
-        return DataStoreFactory.create(
-            serializer = encryptedSerializer,
-            produceFile = { File(context.filesDir, DATASTORE_FILE) }
-        )
+        return keyDataStoreInstance ?: synchronized(this) {
+            keyDataStoreInstance ?: run {
+                val aead = getAead(context)
+                val encryptedSerializer = EncryptedSerializer(KeyStorageSerializer, aead)
+                DataStoreFactory.create(
+                    serializer = encryptedSerializer,
+                    produceFile = { File(context.applicationContext.filesDir, DATASTORE_FILE) }
+                ).also { keyDataStoreInstance = it }
+            }
+        }
     }
 
     /**

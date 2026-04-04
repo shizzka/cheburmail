@@ -64,6 +64,13 @@ class TransportService(
 
         return emails
             .filter { emailParser.isCheburMail(it) }
-            .map { emailParser.parse(it) }
+            .mapNotNull { email ->
+                try {
+                    emailParser.parse(email)
+                } catch (e: TransportException.FormatException) {
+                    android.util.Log.w("TransportService", "Skipping malformed message: ${e.message}")
+                    null
+                }
+            }
     }
 }

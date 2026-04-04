@@ -9,9 +9,14 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import ru.cheburmail.app.crypto.CryptoProvider
+import ru.cheburmail.app.crypto.KeyPairGenerator
 import ru.cheburmail.app.crypto.MessageDecryptor
+import ru.cheburmail.app.crypto.MessageEncryptor
+import ru.cheburmail.app.crypto.NonceGenerator
 import ru.cheburmail.app.db.CheburMailDatabase
 import ru.cheburmail.app.repository.AccountRepository
+import ru.cheburmail.app.storage.SecureKeyStorage
 import ru.cheburmail.app.transport.EmailFormatter
 import ru.cheburmail.app.transport.EmailParser
 import ru.cheburmail.app.transport.ImapClient
@@ -20,8 +25,6 @@ import ru.cheburmail.app.transport.RetryStrategy
 import ru.cheburmail.app.transport.SendWorker
 import ru.cheburmail.app.transport.SmtpClient
 import ru.cheburmail.app.transport.TransportService
-import ru.cheburmail.app.crypto.MessageEncryptor
-import ru.cheburmail.app.storage.SecureKeyStorage
 import java.util.concurrent.TimeUnit
 
 /**
@@ -49,12 +52,10 @@ class PeriodicSyncWorker(
         }
 
         val db = CheburMailDatabase.getInstance(applicationContext)
-        val keyStorage = SecureKeyStorage.create(applicationContext)
-        val keyData = keyStorage.load()
-        if (keyData == null) {
-            Log.w(TAG, "Нет ключей, пропускаем синхронизацию")
-            return Result.success()
-        }
+        val ls = CryptoProvider.lazySodium
+        val keyPairGenerator = KeyPairGenerator(ls)
+        val keyStorage = SecureKeyStorage.create(applicationContext, keyPairGenerator)
+        val keyPair = keyStorage.getOrCreateKeyPair()
 
         try {
             // Получение входящих
@@ -63,25 +64,28 @@ class PeriodicSyncWorker(
             val emailFormatter = EmailFormatter()
             val smtpClient = SmtpClient()
             val retryStrategy = RetryStrategy()
+            val nonceGenerator = NonceGenerator(ls)
+            val encryptor = MessageEncryptor(ls, nonceGenerator)
+            val decryptor = MessageDecryptor(ls)
 
-            // Для создания TransportService нужны encryptor/decryptor
-            // но ReceiveWorker использует свой decryptor напрямую
             val transportService = TransportService(
                 smtpClient = smtpClient,
                 imapClient = imapClient,
                 emailFormatter = emailFormatter,
                 emailParser = emailParser,
-                encryptor = null,
-                decryptor = null
+                encryptor = encryptor,
+                decryptor = decryptor
             )
 
             val receiveWorker = ReceiveWorker(
                 transportService = transportService,
-                decryptor = MessageDecryptor.create(),
+                decryptor = decryptor,
                 retryStrategy = retryStrategy,
                 messageDao = db.messageDao(),
                 contactDao = db.contactDao(),
-                recipientPrivateKey = keyData.privateKey
+                chatDao = db.chatDao(),
+                notificationHelper = ru.cheburmail.app.notification.NotificationHelper(applicationContext),
+                recipientPrivateKey = keyPair.getPrivateKey()
             )
 
             val received = receiveWorker.pollAndProcess(config)

@@ -23,6 +23,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -34,6 +35,7 @@ import androidx.compose.ui.unit.dp
 /**
  * Экран переписки.
  * LazyColumn с историей сообщений (автопрокрутка вниз), поле ввода и кнопка отправки.
+ * Pull-to-refresh запускает синхронизацию.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,6 +46,7 @@ fun ChatScreen(
     val messages by viewModel.messages.collectAsState()
     val chatTitle by viewModel.chatTitle.collectAsState()
     val inputText by viewModel.inputText.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
     val listState = rememberLazyListState()
 
     // Автопрокрутка к последнему сообщению
@@ -74,24 +77,31 @@ fun ChatScreen(
                 .padding(innerPadding)
                 .imePadding()
         ) {
-            // Список сообщений
-            LazyColumn(
-                state = listState,
+            // Список сообщений с pull-to-refresh
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = viewModel::refresh,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
             ) {
-                items(messages, key = { it.id }) { message ->
-                    MessageBubble(
-                        message = message,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
-                }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 8.dp)
+                ) {
+                    items(messages, key = { it.id }) { message ->
+                        MessageBubble(
+                            message = message,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                    }
 
-                // Отступ снизу
-                item {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    // Отступ снизу
+                    item {
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
                 }
             }
 

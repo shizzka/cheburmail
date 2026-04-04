@@ -65,7 +65,7 @@ fun MessageStatusIcon(
             )
         }
 
-        MessageStatus.RECEIVED -> {
+        MessageStatus.RECEIVED, MessageStatus.READ -> {
             // Не показываем иконку для входящих сообщений
         }
     }

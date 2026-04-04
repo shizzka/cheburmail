@@ -1,5 +1,6 @@
 package ru.cheburmail.app.transport
 
+import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.util.Properties
@@ -29,40 +30,52 @@ open class ImapClient {
         try {
             store = connectStore(config)
 
+            // Создаем папку CheburMail если она не существует
             ensureCheburMailFolder(store)
+
+            // Перемещаем сообщения из INBOX в CheburMail
             moveCheburMailFromInbox(store)
 
             val folder = store.getFolder(CHEBURMAIL_FOLDER)
             if (!folder.exists()) {
+                Log.w(TAG, "Папка $CHEBURMAIL_FOLDER не существует после создания")
                 return emptyList()
             }
 
             folder.open(Folder.READ_WRITE)
             try {
-                val unseenTerm = FlagTerm(Flags(Flags.Flag.SEEN), false)
-                val messages = folder.search(unseenTerm)
+                // Fetch ALL CM messages — deduplication happens in ReceiveWorker
+                val messages = folder.messages
 
                 val result = mutableListOf<EmailMessage>()
                 for (msg in messages) {
                     val subject = msg.subject ?: continue
                     if (!subject.startsWith(EmailMessage.SUBJECT_PREFIX)) continue
 
-                    val bodyBytes = extractBody(msg)
-                    val from = msg.from?.firstOrNull()?.toString() ?: continue
-                    val to = msg.allRecipients?.firstOrNull()?.toString() ?: ""
-                    val contentType = EmailMessage.CHEBURMAIL_CONTENT_TYPE
+                    try {
+                        val bodyBytes = extractBody(msg)
+                        val rawFrom = msg.from?.firstOrNull()?.toString() ?: continue
+                        val from = normalizeEmail(rawFrom)
+                        val rawTo = msg.allRecipients?.firstOrNull()?.toString() ?: ""
+                        val to = normalizeEmail(rawTo)
+                        val contentType = EmailMessage.CHEBURMAIL_CONTENT_TYPE
 
-                    result.add(
-                        EmailMessage(
-                            from = from,
-                            to = to,
-                            subject = subject,
-                            body = bodyBytes,
-                            contentType = contentType
+                        result.add(
+                            EmailMessage(
+                                from = from,
+                                to = to,
+                                subject = subject,
+                                body = bodyBytes,
+                                contentType = contentType
+                            )
                         )
-                    )
 
-                    msg.setFlag(Flags.Flag.SEEN, true)
+                        // Mark as SEEN after successful extraction
+                        msg.setFlag(Flags.Flag.SEEN, true)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error extracting message ${msg.subject}: ${e.message}")
+                        // Don't mark as SEEN — will retry next cycle
+                    }
                 }
 
                 return result
@@ -160,7 +173,12 @@ open class ImapClient {
         inbox.open(Folder.READ_WRITE)
         try {
             val cmMessages = inbox.search(SubjectTerm("CM/1/"))
-            if (cmMessages.isEmpty()) return
+            if (cmMessages.isEmpty()) {
+                android.util.Log.d(TAG, "В INBOX нет сообщений CM/1/")
+                return
+            }
+
+            android.util.Log.d(TAG, "Найдено ${cmMessages.size} сообщений CM/1/ в INBOX")
 
             val cheburFolder = store.getFolder(CHEBURMAIL_FOLDER)
             if (!cheburFolder.exists()) return
@@ -171,6 +189,8 @@ open class ImapClient {
                 msg.setFlag(Flags.Flag.DELETED, true)
             }
             inbox.expunge()
+
+            android.util.Log.d(TAG, "Перемещено ${cmMessages.size} сообщений в $CHEBURMAIL_FOLDER")
         } finally {
             if (inbox.isOpen) {
                 inbox.close(true)
@@ -210,7 +230,19 @@ open class ImapClient {
         }
     }
 
+    /**
+     * Normalize email from IMAP format.
+     * " <user@example.com>" → "user@example.com"
+     * "User Name <user@example.com>" → "user@example.com"
+     */
+    private fun normalizeEmail(raw: String): String {
+        val trimmed = raw.trim()
+        val match = Regex("<(.+)>").find(trimmed)
+        return match?.groupValues?.get(1)?.trim() ?: trimmed
+    }
+
     companion object {
+        private const val TAG = "ImapClient"
         const val CHEBURMAIL_FOLDER = "CheburMail"
     }
 }

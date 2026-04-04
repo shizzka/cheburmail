@@ -1,5 +1,6 @@
 package ru.cheburmail.app.transport
 
+import android.util.Log
 import java.util.Properties
 import javax.mail.Authenticator
 import javax.mail.Message
@@ -27,6 +28,8 @@ open class SmtpClient {
      */
     open fun send(config: EmailConfig, message: EmailMessage) {
         try {
+            Log.d(TAG, "Отправка письма: ${message.from} -> ${message.to}, subject: ${message.subject}")
+
             val props = Properties().apply {
                 put("mail.smtp.host", config.smtpHost)
                 put("mail.smtp.port", config.smtpPort.toString())
@@ -63,10 +66,16 @@ open class SmtpClient {
             }
 
             Transport.send(mimeMessage)
+            Log.i(TAG, "Письмо успешно отправлено: ${message.subject}")
         } catch (e: TransportException) {
             throw e
         } catch (e: Exception) {
+            Log.e(TAG, "Ошибка отправки письма: ${e.message}", e)
             throw TransportException.SmtpException("SMTP send failed: ${e.message}", e)
         }
+    }
+
+    companion object {
+        private const val TAG = "SmtpClient"
     }
 }
