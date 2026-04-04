@@ -79,6 +79,11 @@ class TransportService(
     fun receiveAll(config: EmailConfig): ReceivedMessages {
         val emails = imapClient.fetchMessages(config)
 
+        // Debug: log all received subjects
+        emails.forEach { e ->
+            android.util.Log.d("TransportService", "Received email: subject='${e.subject}' from='${e.from}' isKeyEx=${KeyExchangeManager.isKeyExchangeSubject(e.subject)}")
+        }
+
         val keyExchangeEmails = emails.filter {
             KeyExchangeManager.isKeyExchangeSubject(it.subject)
         }
