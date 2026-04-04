@@ -239,6 +239,9 @@ class ChatViewModel(
                     val ls = CryptoProvider.lazySodium
                     val encryptor = MessageEncryptor(ls, NonceGenerator(ls))
 
+                    Log.d(TAG, "Encrypting for ${contact.email}, " +
+                        "recipientPubKey=${java.util.Base64.getEncoder().encodeToString(contact.publicKey).take(16)}..., " +
+                        "myPubKey=${java.util.Base64.getEncoder().encodeToString(keyPair.publicKey).take(16)}...")
                     val envelope = encryptor.encrypt(
                         message = text.toByteArray(Charsets.UTF_8),
                         recipientPublicKey = contact.publicKey,

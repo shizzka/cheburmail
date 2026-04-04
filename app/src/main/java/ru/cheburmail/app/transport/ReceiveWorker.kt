@@ -126,6 +126,9 @@ class ReceiveWorker(
                 }
 
                 // Decrypt
+                Log.d(TAG, "Decrypting ${msg.msgUuid} from ${msg.fromEmail}, " +
+                    "senderPubKey=${java.util.Base64.getEncoder().encodeToString(contact.publicKey).take(16)}..., " +
+                    "myPubKey=${java.util.Base64.getEncoder().encodeToString(recipientPrivateKey).take(16)}...(priv)")
                 val plaintext = decryptor.decrypt(
                     msg.envelope,
                     contact.publicKey,

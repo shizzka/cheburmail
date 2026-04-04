@@ -100,7 +100,9 @@ class SendWorker(
             // Success
             sendQueueDao.updateStatus(entry.id, QueueStatus.SENT)
             messageDao.updateStatus(msgId, MessageStatus.SENT)
-            Log.i(TAG, "Message $msgId sent successfully")
+            // Verify update actually worked
+            val updated = messageDao.getByIdOnce(msgId)
+            Log.i(TAG, "Message $msgId sent successfully, DB status now: ${updated?.status}")
 
         } catch (e: CryptoException) {
             // Crypto errors are not retryable

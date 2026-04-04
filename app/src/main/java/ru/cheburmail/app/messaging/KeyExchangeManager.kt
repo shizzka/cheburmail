@@ -53,7 +53,7 @@ class KeyExchangeManager(
             to = targetEmail,
             subject = subject,
             body = json.toString().toByteArray(Charsets.UTF_8),
-            contentType = KEYEX_CONTENT_TYPE
+            contentType = EmailMessage.CHEBURMAIL_CONTENT_TYPE
         )
 
         smtpClient.send(config, emailMessage)
@@ -86,18 +86,30 @@ class KeyExchangeManager(
                 return false
             }
 
-            // Проверяем, не добавлен ли уже
-            val existing = contactDao.getByEmail(senderEmail)
-            if (existing != null) {
-                Log.d(TAG, "Контакт $senderEmail уже существует, пропускаем")
-                return false
-            }
-
             // Получаем локальный ключ для fingerprint
             val localKey = keyStorage.getPublicKey()
                 ?: throw IllegalStateException("Локальный ключ не найден")
 
             val fingerprint = FingerprintGenerator.generateHex(localKey, publicKey)
+
+            // Проверяем, не добавлен ли уже
+            val existing = contactDao.getByEmail(senderEmail)
+            if (existing != null) {
+                // Обновляем публичный ключ если он изменился (переустановка, регенерация)
+                if (!existing.publicKey.contentEquals(publicKey)) {
+                    val updated = existing.copy(
+                        publicKey = publicKey,
+                        fingerprint = fingerprint,
+                        trustStatus = TrustStatus.UNVERIFIED,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                    contactDao.update(updated)
+                    Log.i(TAG, "Публичный ключ $senderEmail обновлён (сброшен в UNVERIFIED)")
+                } else {
+                    Log.d(TAG, "Контакт $senderEmail уже существует, ключ не изменился")
+                }
+                return false
+            }
 
             val now = System.currentTimeMillis()
             val contact = ContactEntity(
