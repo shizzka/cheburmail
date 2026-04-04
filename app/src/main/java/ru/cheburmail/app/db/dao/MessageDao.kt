@@ -55,4 +55,10 @@ interface MessageDao {
      */
     @Query("UPDATE messages SET status = 'READ' WHERE chat_id = :chatId AND status = 'RECEIVED' AND is_outgoing = 0")
     suspend fun markChatAsRead(chatId: String)
+
+    /**
+     * Удалить все сообщения чата.
+     */
+    @Query("DELETE FROM messages WHERE chat_id = :chatId")
+    suspend fun deleteByChatId(chatId: String)
 }

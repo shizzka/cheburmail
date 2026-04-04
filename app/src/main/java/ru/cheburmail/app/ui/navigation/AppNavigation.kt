@@ -75,9 +75,10 @@ fun AppNavigation(
     val onboardingViewModel = OnboardingViewModel(accountRepository)
     val contactsViewModel = ContactsViewModel(
         contactDao = database.contactDao(),
-        keyStorage = keyStorage
+        keyStorage = keyStorage,
+        accountRepository = accountRepository
     )
-    val chatListViewModel = ChatListViewModel(database.chatDao())
+    val chatListViewModel = ChatListViewModel(database.chatDao(), database.messageDao(), navController.context.applicationContext)
     val settingsViewModel = SettingsViewModel(accountRepository)
 
     NavHost(
@@ -109,6 +110,9 @@ fun AppNavigation(
                 },
                 onQrCode = {
                     navController.navigate(Routes.QR_CODE)
+                },
+                onSettings = {
+                    navController.navigate(Routes.SETTINGS)
                 }
             )
         }

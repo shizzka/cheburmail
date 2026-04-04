@@ -9,13 +9,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -63,8 +68,11 @@ fun SettingsScreen(
     val soundEnabled by viewModel.soundEnabled.collectAsState()
     val defaultTimer by viewModel.defaultDisappearTimer.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
+    val clearingImap by viewModel.clearingImap.collectAsState()
+    val imapClearResult by viewModel.imapClearResult.collectAsState()
 
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
+    var showClearImapDialog by remember { mutableStateOf(false) }
 
     // Диалог ошибки
     errorMessage?.let { error ->
@@ -97,6 +105,42 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = null }) {
                     Text("Отмена")
+                }
+            }
+        )
+    }
+
+    // Диалог очистки IMAP папки
+    if (showClearImapDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearImapDialog = false },
+            title = { Text("Очистить почту?") },
+            text = { Text("Все письма CheburMail будут удалены с почтового сервера. Локальные сообщения останутся.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.clearImapFolder()
+                    showClearImapDialog = false
+                }) {
+                    Text("Очистить", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearImapDialog = false }) {
+                    Text("Отмена")
+                }
+            }
+        )
+    }
+
+    // Результат очистки
+    imapClearResult?.let { result ->
+        AlertDialog(
+            onDismissRequest = { viewModel.clearImapResult() },
+            title = { Text("Готово") },
+            text = { Text(result) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.clearImapResult() }) {
+                    Text("OK")
                 }
             }
         )
@@ -183,6 +227,48 @@ fun SettingsScreen(
                     currentTimer = defaultTimer,
                     displayName = viewModel.getTimerDisplayName(defaultTimer),
                     onTimerSelected = { viewModel.setDefaultDisappearTimer(it) }
+                )
+            }
+
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
+
+            // --- Секция: Данные ---
+            item {
+                SectionHeader("Данные")
+            }
+
+            item {
+                Button(
+                    onClick = { showClearImapDialog = true },
+                    enabled = !clearingImap,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (clearingImap) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Очистка...")
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.CleaningServices,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Очистить папку CheburMail на сервере")
+                    }
+                }
+            }
+
+            item {
+                Text(
+                    text = "Удаляет все письма CheburMail с почтового сервера",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
                 )
             }
 

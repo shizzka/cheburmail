@@ -20,7 +20,9 @@ import ru.cheburmail.app.transport.EmailParser
 import ru.cheburmail.app.transport.ImapClient
 import ru.cheburmail.app.transport.ReceiveWorker
 import ru.cheburmail.app.transport.RetryStrategy
+import ru.cheburmail.app.transport.SmtpClient
 import ru.cheburmail.app.transport.TransportService
+import ru.cheburmail.app.messaging.KeyExchangeManager
 
 /**
  * BroadcastReceiver для обработки событий синхронизации.
@@ -77,6 +79,12 @@ class SyncReceiver : BroadcastReceiver() {
             decryptor = decryptor
         )
 
+        val keyExchangeManager = KeyExchangeManager(
+            smtpClient = SmtpClient(),
+            contactDao = db.contactDao(),
+            keyStorage = keyStorage
+        )
+
         val receiveWorker = ReceiveWorker(
             transportService = transportService,
             decryptor = decryptor,
@@ -85,7 +93,9 @@ class SyncReceiver : BroadcastReceiver() {
             contactDao = db.contactDao(),
             chatDao = db.chatDao(),
             notificationHelper = ru.cheburmail.app.notification.NotificationHelper(context),
-            recipientPrivateKey = keyPair.getPrivateKey()
+            recipientPrivateKey = keyPair.getPrivateKey(),
+            keyExchangeManager = keyExchangeManager,
+            emailConfig = config
         )
 
         val received = receiveWorker.pollAndProcess(config)

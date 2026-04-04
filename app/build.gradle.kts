@@ -21,6 +21,16 @@ android {
             enableV3Signing = true
             enableV4Signing = true
         }
+        create("release") {
+            storeFile = file("${rootProject.projectDir}/cheburmail-release.jks")
+            storePassword = "***REDACTED***"
+            keyAlias = "cheburmail"
+            keyPassword = "***REDACTED***"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
+        }
     }
 
     defaultConfig {
@@ -33,13 +43,13 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            abiFilters += listOf("arm64-v8a")
         }
     }
 
     packaging {
         jniLibs {
-            useLegacyPackaging = false
+            useLegacyPackaging = true
         }
     }
 
@@ -51,6 +61,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

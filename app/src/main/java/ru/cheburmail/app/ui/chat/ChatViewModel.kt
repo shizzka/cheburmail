@@ -149,6 +149,11 @@ class ChatViewModel(
 
                     val keyPair = keyStorage.getOrCreateKeyPair()
                     val db = ru.cheburmail.app.db.CheburMailDatabase.getInstance(appContext)
+                    val keyExchangeManager = ru.cheburmail.app.messaging.KeyExchangeManager(
+                        smtpClient = SmtpClient(),
+                        contactDao = db.contactDao(),
+                        keyStorage = keyStorage
+                    )
                     val receiveWorker = ReceiveWorker(
                         transportService = transportService,
                         decryptor = decryptor,
@@ -157,7 +162,9 @@ class ChatViewModel(
                         contactDao = db.contactDao(),
                         chatDao = db.chatDao(),
                         notificationHelper = NotificationHelper(appContext),
-                        recipientPrivateKey = keyPair.getPrivateKey()
+                        recipientPrivateKey = keyPair.getPrivateKey(),
+                        keyExchangeManager = keyExchangeManager,
+                        emailConfig = config
                     )
 
                     val received = receiveWorker.pollAndProcess(config)

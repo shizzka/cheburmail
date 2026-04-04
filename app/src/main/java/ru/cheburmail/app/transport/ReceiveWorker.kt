@@ -14,6 +14,7 @@ import ru.cheburmail.app.group.ControlMessage
 import ru.cheburmail.app.group.ControlMessageHandler
 import ru.cheburmail.app.messaging.DeliveryReceiptHandler
 import ru.cheburmail.app.messaging.DeliveryReceiptSender
+import ru.cheburmail.app.messaging.KeyExchangeManager
 import ru.cheburmail.app.notification.NotificationHelper
 
 /**
@@ -43,7 +44,9 @@ class ReceiveWorker(
     private val recipientPrivateKey: ByteArray,
     private val deliveryReceiptSender: DeliveryReceiptSender? = null,
     private val deliveryReceiptHandler: DeliveryReceiptHandler? = null,
-    private val controlMessageHandler: ControlMessageHandler? = null
+    private val controlMessageHandler: ControlMessageHandler? = null,
+    private val keyExchangeManager: KeyExchangeManager? = null,
+    private val emailConfig: EmailConfig? = null
 ) {
 
     /**
@@ -53,9 +56,9 @@ class ReceiveWorker(
      * @return number of new messages saved to Room
      */
     suspend fun pollAndProcess(config: EmailConfig): Int {
-        val parsed: List<EmailParser.ParsedMessage>
+        val received: TransportService.ReceivedMessages
         try {
-            parsed = transportService.receiveMessages(config)
+            received = transportService.receiveAll(config)
         } catch (e: TransportException.ImapException) {
             Log.e(TAG, "IMAP error: ${e.message}")
             return 0
@@ -63,6 +66,21 @@ class ReceiveWorker(
             Log.e(TAG, "Unexpected error fetching messages: ${e.message}")
             return 0
         }
+
+        // Обрабатываем key exchange сообщения
+        for (kexEmail in received.keyExchangeEmails) {
+            try {
+                keyExchangeManager?.handleKeyExchange(
+                    body = kexEmail.body,
+                    fromEmail = kexEmail.from,
+                    config = emailConfig
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing key exchange from ${kexEmail.from}: ${e.message}")
+            }
+        }
+
+        val parsed = received.messages
 
         var savedCount = 0
 

@@ -2,6 +2,7 @@ package ru.cheburmail.app.transport
 
 import ru.cheburmail.app.crypto.MessageDecryptor
 import ru.cheburmail.app.crypto.MessageEncryptor
+import ru.cheburmail.app.messaging.KeyExchangeManager
 
 /**
  * Orchestrates the full send/receive pipeline:
@@ -59,11 +60,31 @@ class TransportService(
      * @param config IMAP configuration
      * @return list of ParsedMessage
      */
+    /**
+     * Результат получения сообщений: обычные + key exchange.
+     */
+    data class ReceivedMessages(
+        val messages: List<EmailParser.ParsedMessage>,
+        val keyExchangeEmails: List<EmailMessage>
+    )
+
     fun receiveMessages(config: EmailConfig): List<EmailParser.ParsedMessage> {
+        return receiveAll(config).messages
+    }
+
+    /**
+     * Receive pipeline с поддержкой key exchange.
+     * Возвращает обычные сообщения и key exchange отдельно.
+     */
+    fun receiveAll(config: EmailConfig): ReceivedMessages {
         val emails = imapClient.fetchMessages(config)
 
-        return emails
-            .filter { emailParser.isCheburMail(it) }
+        val keyExchangeEmails = emails.filter {
+            KeyExchangeManager.isKeyExchangeSubject(it.subject)
+        }
+
+        val parsedMessages = emails
+            .filter { emailParser.isCheburMail(it) && !KeyExchangeManager.isKeyExchangeSubject(it.subject) }
             .mapNotNull { email ->
                 try {
                     emailParser.parse(email)
@@ -72,5 +93,7 @@ class TransportService(
                     null
                 }
             }
+
+        return ReceivedMessages(parsedMessages, keyExchangeEmails)
     }
 }

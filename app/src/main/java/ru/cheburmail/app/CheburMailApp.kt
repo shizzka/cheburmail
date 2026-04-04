@@ -111,6 +111,11 @@ class CheburMailApp : Application() {
                             decryptor = decryptor
                         )
                         val keyPair = keyStorage.getOrCreateKeyPair()
+                        val keyExchangeManager = ru.cheburmail.app.messaging.KeyExchangeManager(
+                            smtpClient = ru.cheburmail.app.transport.SmtpClient(),
+                            contactDao = db.contactDao(),
+                            keyStorage = keyStorage
+                        )
                         val receiveWorker = ru.cheburmail.app.transport.ReceiveWorker(
                             transportService = transportService,
                             decryptor = decryptor,
@@ -119,7 +124,9 @@ class CheburMailApp : Application() {
                             contactDao = db.contactDao(),
                             chatDao = db.chatDao(),
                             notificationHelper = NotificationHelper(this@CheburMailApp),
-                            recipientPrivateKey = keyPair.getPrivateKey()
+                            recipientPrivateKey = keyPair.getPrivateKey(),
+                            keyExchangeManager = keyExchangeManager,
+                            emailConfig = config
                         )
                         val received = receiveWorker.pollAndProcess(config)
                         Log.i("CheburDebug", "Force sync: received $received new messages")
