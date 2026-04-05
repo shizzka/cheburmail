@@ -61,11 +61,12 @@ class TransportService(
      * @return list of ParsedMessage
      */
     /**
-     * Результат получения сообщений: обычные + key exchange.
+     * Результат получения сообщений: обычные + key exchange + медиа.
      */
     data class ReceivedMessages(
         val messages: List<EmailParser.ParsedMessage>,
-        val keyExchangeEmails: List<EmailMessage>
+        val keyExchangeEmails: List<EmailMessage>,
+        val mediaMessages: List<EmailParser.ParsedMediaMessage> = emptyList()
     )
 
     fun receiveMessages(config: EmailConfig): List<EmailParser.ParsedMessage> {
@@ -73,8 +74,8 @@ class TransportService(
     }
 
     /**
-     * Receive pipeline с поддержкой key exchange.
-     * Возвращает обычные сообщения и key exchange отдельно.
+     * Receive pipeline с поддержкой key exchange и медиа-сообщений.
+     * Возвращает обычные сообщения, key exchange и медиа отдельно.
      */
     fun receiveAll(config: EmailConfig): ReceivedMessages {
         val emails = imapClient.fetchMessages(config)
@@ -88,8 +89,25 @@ class TransportService(
             KeyExchangeManager.isKeyExchangeSubject(it.subject)
         }
 
+        // Медиа-сообщения: subject начинается с CM/1/ И заканчивается на /M
+        val parsedMediaMessages = emails
+            .filter { emailParser.isCheburMailMedia(it) && !KeyExchangeManager.isKeyExchangeSubject(it.subject) }
+            .mapNotNull { email ->
+                try {
+                    emailParser.parseMedia(email)
+                } catch (e: TransportException.FormatException) {
+                    android.util.Log.w("TransportService", "Skipping malformed media message: ${e.message}")
+                    null
+                }
+            }
+
+        // Обычные текстовые сообщения: isCheburMail AND NOT media AND NOT key exchange
         val parsedMessages = emails
-            .filter { emailParser.isCheburMail(it) && !KeyExchangeManager.isKeyExchangeSubject(it.subject) }
+            .filter {
+                emailParser.isCheburMail(it) &&
+                    !emailParser.isCheburMailMedia(it) &&
+                    !KeyExchangeManager.isKeyExchangeSubject(it.subject)
+            }
             .mapNotNull { email ->
                 try {
                     emailParser.parse(email)
@@ -99,6 +117,6 @@ class TransportService(
                 }
             }
 
-        return ReceivedMessages(parsedMessages, keyExchangeEmails)
+        return ReceivedMessages(parsedMessages, keyExchangeEmails, parsedMediaMessages)
     }
 }
