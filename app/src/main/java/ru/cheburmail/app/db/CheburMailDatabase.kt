@@ -42,6 +42,8 @@ abstract class CheburMailDatabase : RoomDatabase() {
         val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE send_queue ADD COLUMN payload_file_path TEXT DEFAULT NULL")
+                // Clean up stuck entries with oversized BLOBs that can't be read by CursorWindow
+                db.execSQL("DELETE FROM send_queue WHERE LENGTH(encrypted_payload) > 1000000")
             }
         }
 
