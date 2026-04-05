@@ -125,6 +125,12 @@ dependencies {
     // Google Code Scanner
     implementation(libs.play.code.scanner)
 
+    // Coil
+    implementation(libs.coil.compose)
+
+    // ExifInterface for EXIF rotation handling
+    implementation("androidx.exifinterface:exifinterface:1.4.1")
+
     // Crypto
     implementation(libs.lazysodium.android) {
         exclude(group = "net.java.dev.jna", module = "jna")

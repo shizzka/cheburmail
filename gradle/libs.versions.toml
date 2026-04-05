@@ -26,6 +26,7 @@ android-activation = "1.6.2"
 work-runtime = "2.10.0"
 zxing-core = "3.5.3"
 play-code-scanner = "16.1.0"
+coil = "3.1.0"
 
 [libraries]
 # Compose BOM
@@ -83,6 +84,9 @@ zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing-c
 
 # Google Code Scanner
 play-code-scanner = { group = "com.google.android.gms", name = "play-services-code-scanner", version.ref = "play-code-scanner" }
+
+# Coil
+coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 
 # Serialization
 serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
