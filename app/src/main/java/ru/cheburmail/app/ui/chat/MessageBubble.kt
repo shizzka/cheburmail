@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import ru.cheburmail.app.db.MediaType
 import ru.cheburmail.app.db.MessageStatus
 import ru.cheburmail.app.db.entity.MessageEntity
 import java.text.SimpleDateFormat
@@ -25,12 +26,24 @@ import java.util.Locale
 /**
  * Bubble одного сообщения.
  * Исходящие — справа с primary-цветом, входящие — слева с surfaceVariant.
+ * Для IMAGE-сообщений делегирует в [ImageMessageBubble].
  */
 @Composable
 fun MessageBubble(
     message: MessageEntity,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onImageClick: (String) -> Unit = {}
 ) {
+    // Делегируем медиа-типы в специализированные composable
+    if (message.mediaType == MediaType.IMAGE) {
+        ImageMessageBubble(
+            message = message,
+            onImageClick = onImageClick,
+            modifier = modifier
+        )
+        return
+    }
+
     val isOutgoing = message.isOutgoing
     val alignment = if (isOutgoing) Arrangement.End else Arrangement.Start
 
