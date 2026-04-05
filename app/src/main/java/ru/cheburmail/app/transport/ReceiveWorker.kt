@@ -4,6 +4,8 @@ import android.util.Log
 import ru.cheburmail.app.crypto.CryptoException
 import ru.cheburmail.app.crypto.MessageDecryptor
 import ru.cheburmail.app.db.ChatType
+import ru.cheburmail.app.db.MediaDownloadStatus
+import ru.cheburmail.app.db.MediaType
 import ru.cheburmail.app.db.MessageStatus
 import ru.cheburmail.app.db.dao.ChatDao
 import ru.cheburmail.app.db.dao.ContactDao
@@ -12,6 +14,9 @@ import ru.cheburmail.app.db.entity.ChatEntity
 import ru.cheburmail.app.db.entity.MessageEntity
 import ru.cheburmail.app.group.ControlMessage
 import ru.cheburmail.app.group.ControlMessageHandler
+import ru.cheburmail.app.media.MediaDecryptor
+import ru.cheburmail.app.media.MediaFileManager
+import ru.cheburmail.app.media.MediaMetadata
 import ru.cheburmail.app.messaging.DeliveryReceiptHandler
 import ru.cheburmail.app.messaging.DeliveryReceiptSender
 import ru.cheburmail.app.messaging.KeyExchangeManager
@@ -46,7 +51,9 @@ class ReceiveWorker(
     private val deliveryReceiptHandler: DeliveryReceiptHandler? = null,
     private val controlMessageHandler: ControlMessageHandler? = null,
     private val keyExchangeManager: KeyExchangeManager? = null,
-    private val emailConfig: EmailConfig? = null
+    private val emailConfig: EmailConfig? = null,
+    private val mediaDecryptor: MediaDecryptor? = null,
+    private val mediaFileManager: MediaFileManager? = null
 ) {
 
     /**
@@ -193,6 +200,119 @@ class ReceiveWorker(
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing message ${msg.msgUuid}: ${e.message}")
                 // Skip this message but continue processing others
+            }
+        }
+
+        // Обрабатываем медиа-сообщения
+        if (mediaDecryptor != null && mediaFileManager != null) {
+            for (mediaMsg in received.mediaMessages) {
+                try {
+                    if (messageDao.existsById(mediaMsg.msgUuid)) {
+                        Log.d(TAG, "Duplicate media message ${mediaMsg.msgUuid}, skipping")
+                        continue
+                    }
+
+                    val contact = contactDao.getByEmail(mediaMsg.fromEmail)
+                    if (contact == null) {
+                        Log.w(TAG, "Unknown sender ${mediaMsg.fromEmail}, skipping media ${mediaMsg.msgUuid}")
+                        continue
+                    }
+
+                    val decryptedMedia = mediaDecryptor.decrypt(
+                        metadataEnvelope = mediaMsg.metadataEnvelope,
+                        payloadEnvelope = mediaMsg.payloadEnvelope,
+                        senderPublicKey = contact.publicKey,
+                        recipientPrivateKey = recipientPrivateKey
+                    )
+
+                    val now = System.currentTimeMillis()
+
+                    // Убеждаемся что чат существует
+                    if (chatDao != null) {
+                        val existingChat = chatDao.getById(mediaMsg.chatId)
+                        if (existingChat == null) {
+                            chatDao.insert(ChatEntity(
+                                id = mediaMsg.chatId,
+                                type = ChatType.DIRECT,
+                                title = contact.displayName,
+                                createdAt = now,
+                                updatedAt = now
+                            ))
+                        }
+                    }
+
+                    val metadata = decryptedMedia.metadata
+                    val mediaType = when (metadata.type) {
+                        MediaMetadata.TYPE_IMAGE -> MediaType.IMAGE
+                        MediaMetadata.TYPE_VOICE -> MediaType.VOICE
+                        MediaMetadata.TYPE_FILE -> MediaType.FILE
+                        else -> MediaType.FILE
+                    }
+
+                    // Сохраняем файл локально
+                    val localPath: String?
+                    val thumbPath: String?
+
+                    when (mediaType) {
+                        MediaType.IMAGE -> {
+                            localPath = mediaFileManager.saveImage(mediaMsg.msgUuid, decryptedMedia.fileBytes)
+                            // Используем полное изображение как thumbnail (или ресайзим при необходимости)
+                            thumbPath = localPath
+                        }
+                        MediaType.VOICE -> {
+                            val ext = if (metadata.mimeType.contains("mp4")) "m4a" else "ogg"
+                            localPath = mediaFileManager.saveVoice(mediaMsg.msgUuid, decryptedMedia.fileBytes, ext)
+                            thumbPath = null
+                        }
+                        else -> {
+                            localPath = mediaFileManager.saveFile(
+                                mediaMsg.msgUuid, decryptedMedia.fileBytes,
+                                metadata.fileName.ifBlank { "file" }
+                            )
+                            thumbPath = null
+                        }
+                    }
+
+                    val entity = MessageEntity(
+                        id = mediaMsg.msgUuid,
+                        chatId = mediaMsg.chatId,
+                        senderContactId = contact.id,
+                        isOutgoing = false,
+                        plaintext = metadata.caption,
+                        status = MessageStatus.RECEIVED,
+                        timestamp = now,
+                        mediaType = mediaType,
+                        localMediaUri = localPath,
+                        thumbnailUri = thumbPath,
+                        fileName = metadata.fileName.ifBlank { null },
+                        fileSize = metadata.fileSize.takeIf { it > 0 },
+                        mimeType = metadata.mimeType.ifBlank { null },
+                        voiceDurationMs = metadata.durationMs.takeIf { it > 0 },
+                        waveformData = metadata.waveform.ifBlank { null },
+                        mediaDownloadStatus = MediaDownloadStatus.COMPLETED
+                    )
+                    messageDao.insert(entity)
+                    savedCount++
+
+                    Log.i(TAG, "Saved media message ${mediaMsg.msgUuid} (${metadata.type}) from ${mediaMsg.fromEmail}")
+
+                    val notifPreview = when (mediaType) {
+                        MediaType.IMAGE -> "📷 Фото"
+                        MediaType.VOICE -> "🎤 Голосовое"
+                        MediaType.FILE -> "📎 ${metadata.fileName}"
+                        else -> "Медиа"
+                    }
+                    notificationHelper?.showMessageNotification(
+                        senderName = contact.displayName,
+                        preview = notifPreview,
+                        chatId = mediaMsg.chatId
+                    )
+
+                } catch (e: CryptoException) {
+                    Log.e(TAG, "Decrypt error for media ${mediaMsg.msgUuid}: ${e.message}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error processing media ${mediaMsg.msgUuid}: ${e.message}")
+                }
             }
         }
 
