@@ -93,6 +93,11 @@ class ChatViewModel(
     val voicePlayer = VoicePlayer(appContext)
     private val fileSaver = FileSaver(appContext)
     private val mediaFileManager = MediaFileManager(appContext)
+    private val imageCompressor = ImageCompressor(appContext)
+
+    /** URI для снимка с камеры. */
+    private val _cameraUri = MutableStateFlow<Uri?>(null)
+    val cameraUri: StateFlow<Uri?> = _cameraUri.asStateFlow()
 
     private val _isRecordingVoice = MutableStateFlow(false)
     val isRecordingVoice: StateFlow<Boolean> = _isRecordingVoice.asStateFlow()
@@ -290,6 +295,83 @@ class ChatViewModel(
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending message: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * Создать URI для снимка камеры через FileProvider.
+     */
+    fun prepareCameraUri(): Uri {
+        val uri = mediaFileManager.createCameraUri()
+        _cameraUri.value = uri
+        return uri
+    }
+
+    /**
+     * Обработать выбранное изображение (из галереи или камеры):
+     * сжать, сохранить локально, зашифровать и поставить в очередь отправки.
+     */
+    fun onImagePicked(uri: Uri) {
+        viewModelScope.launch {
+            val email = recipientEmail ?: run {
+                Log.e(TAG, "Recipient email not resolved for image send")
+                return@launch
+            }
+            _isSendingMedia.value = true
+            _sendingMediaLabel.value = "Сжатие изображения..."
+            try {
+                val compressed = withContext(Dispatchers.IO) { imageCompressor.compress(uri) }
+
+                val msgId = UUID.randomUUID().toString()
+                val now = System.currentTimeMillis()
+
+                val localPath = withContext(Dispatchers.IO) {
+                    mediaFileManager.saveImage(msgId, compressed.fullBytes)
+                }
+                val thumbPath = withContext(Dispatchers.IO) {
+                    mediaFileManager.saveThumbnail(msgId, compressed.thumbnailBytes)
+                }
+
+                ensureChatExists()
+
+                val message = MessageEntity(
+                    id = msgId,
+                    chatId = chatId,
+                    isOutgoing = true,
+                    plaintext = "",
+                    status = MessageStatus.SENDING,
+                    timestamp = now,
+                    mediaType = MediaType.IMAGE,
+                    localMediaUri = localPath,
+                    thumbnailUri = thumbPath,
+                    fileSize = compressed.fullBytes.size.toLong(),
+                    mimeType = "image/jpeg",
+                    mediaDownloadStatus = MediaDownloadStatus.NONE
+                )
+                messageDao.insert(message)
+
+                _sendingMediaLabel.value = "Шифрование..."
+                withContext(Dispatchers.IO) {
+                    encryptAndQueueMedia(
+                        msgId = msgId,
+                        recipientEmail = email,
+                        bytes = compressed.fullBytes,
+                        metadata = MediaMetadata(
+                            type = MediaMetadata.TYPE_IMAGE,
+                            fileName = "$msgId.jpg",
+                            fileSize = compressed.fullBytes.size.toLong(),
+                            mimeType = "image/jpeg",
+                            width = compressed.width,
+                            height = compressed.height
+                        ),
+                        now = now
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending image: ${e.message}", e)
+            } finally {
+                _isSendingMedia.value = false
             }
         }
     }
