@@ -592,8 +592,7 @@ class ChatViewModel(
             recipientPublicKey = contact.publicKey,
             senderPrivateKey = keyPair.getPrivateKey()
         )
-        // Pack both envelopes into a single combined binary:
-        // [4-byte big-endian metadata length][metadata envelope bytes][payload envelope bytes]
+        // Pack both envelopes: [4-byte big-endian metadata length][meta bytes][payload bytes]
         val metaBytes = encrypted.metadataEnvelope.toBytes()
         val payloadBytes = encrypted.payloadEnvelope.toBytes()
         val combined = ByteArray(4 + metaBytes.size + payloadBytes.size)
@@ -604,16 +603,34 @@ class ChatViewModel(
         metaBytes.copyInto(combined, 4)
         payloadBytes.copyInto(combined, 4 + metaBytes.size)
 
-        sendQueueDao.insert(
-            SendQueueEntity(
-                messageId = msgId,
-                recipientEmail = recipientEmail,
-                encryptedPayload = combined,
-                status = QueueStatus.QUEUED,
-                createdAt = now,
-                updatedAt = now
+        // Large payloads (>1MB) are stored as files to avoid SQLite CursorWindow limit
+        if (combined.size > 1_000_000) {
+            val outboxDir = java.io.File(appContext.cacheDir, "media/outbox").also { it.mkdirs() }
+            val payloadFile = java.io.File(outboxDir, "$msgId.bin")
+            payloadFile.writeBytes(combined)
+            sendQueueDao.insert(
+                SendQueueEntity(
+                    messageId = msgId,
+                    recipientEmail = recipientEmail,
+                    encryptedPayload = ByteArray(0),
+                    payloadFilePath = payloadFile.absolutePath,
+                    status = QueueStatus.QUEUED,
+                    createdAt = now,
+                    updatedAt = now
+                )
             )
-        )
+        } else {
+            sendQueueDao.insert(
+                SendQueueEntity(
+                    messageId = msgId,
+                    recipientEmail = recipientEmail,
+                    encryptedPayload = combined,
+                    status = QueueStatus.QUEUED,
+                    createdAt = now,
+                    updatedAt = now
+                )
+            )
+        }
         OutboxDrainWorker.enqueue(appContext)
     }
 
