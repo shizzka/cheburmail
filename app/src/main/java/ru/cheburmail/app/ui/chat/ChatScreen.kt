@@ -112,13 +112,8 @@ fun ChatScreen(
         if (granted) viewModel.startVoiceRecording()
     }
 
-    // Автопрокрутка к последнему сообщению
-    // Учитываем +1 для Spacer item в конце LazyColumn
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.scrollToItem(messages.size)
-        }
-    }
+    // С reverseLayout=true LazyColumn автоматически "прилипает" к низу —
+    // новые сообщения появляются внизу без ручного скролла.
 
     Scaffold(
         topBar = {
@@ -155,11 +150,14 @@ fun ChatScreen(
                 ) {
                     LazyColumn(
                         state = listState,
+                        reverseLayout = true,
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = 8.dp)
                     ) {
-                        items(messages, key = { it.id }) { message ->
+                        // reverseLayout=true рендерит item(0) внизу,
+                        // поэтому передаём reversed список
+                        items(messages.reversed(), key = { it.id }) { message ->
                             MessageBubble(
                                 message = message,
                                 modifier = Modifier.padding(vertical = 4.dp),
@@ -167,11 +165,6 @@ fun ChatScreen(
                                 onSaveFile = viewModel::saveFileToDownloads,
                                 voicePlayer = viewModel.voicePlayer
                             )
-                        }
-
-                        // Отступ снизу
-                        item {
-                            Spacer(modifier = Modifier.height(8.dp))
                         }
                     }
                 }
