@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Camera captures stored in external cache -->
+    <external-cache-path
+        name="camera_captures"
+        path="images/camera/" />
+    <!-- Compressed images stored in internal cache -->
+    <cache-path
+        name="compressed_images"
+        path="images/" />
+    <!-- Thumbnails stored in internal cache -->
+    <cache-path
+        name="thumbnails"
+        path="thumbnails/" />
+    <!-- Voice messages stored in internal cache -->
+    <cache-path
+        name="voice_messages"
+        path="voice/" />
+    <!-- Generic files stored in internal cache -->
+    <cache-path
+        name="files"
+        path="files/" />
+</paths>
