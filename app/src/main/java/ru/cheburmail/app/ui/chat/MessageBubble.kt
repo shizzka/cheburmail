@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import ru.cheburmail.app.db.MediaType
 import ru.cheburmail.app.db.MessageStatus
 import ru.cheburmail.app.db.entity.MessageEntity
+import ru.cheburmail.app.media.VoicePlayer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -27,12 +28,15 @@ import java.util.Locale
  * Bubble одного сообщения.
  * Исходящие — справа с primary-цветом, входящие — слева с surfaceVariant.
  * Для IMAGE-сообщений делегирует в [ImageMessageBubble].
+ * Для FILE — в [FileMessageBubble], для VOICE — в [VoiceMessageBubble].
  */
 @Composable
 fun MessageBubble(
     message: MessageEntity,
     modifier: Modifier = Modifier,
-    onImageClick: (String) -> Unit = {}
+    onImageClick: (String) -> Unit = {},
+    onSaveFile: (String) -> Unit = {},
+    voicePlayer: VoicePlayer? = null
 ) {
     // Делегируем медиа-типы в специализированные composable
     if (message.mediaType == MediaType.IMAGE) {
@@ -83,25 +87,45 @@ fun MessageBubble(
             Column(
                 modifier = Modifier.padding(12.dp)
             ) {
-                Text(
-                    text = message.plaintext,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = textColor
-                )
+                when (message.mediaType) {
+                    MediaType.FILE -> {
+                        FileMessageBubble(
+                            message = message,
+                            textColor = textColor,
+                            onSaveFile = onSaveFile
+                        )
+                    }
 
-                Row(
-                    modifier = Modifier.align(Alignment.End),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = formatTime(message.timestamp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = textColor.copy(alpha = 0.6f)
-                    )
+                    MediaType.VOICE -> {
+                        VoiceMessageBubble(
+                            message = message,
+                            voicePlayer = voicePlayer,
+                            textColor = textColor
+                        )
+                    }
 
-                    if (isOutgoing) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        MessageStatusIcon(status = message.status)
+                    else -> {
+                        Text(
+                            text = message.plaintext,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = textColor
+                        )
+
+                        Row(
+                            modifier = Modifier.align(Alignment.End),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = formatTime(message.timestamp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = textColor.copy(alpha = 0.6f)
+                            )
+
+                            if (isOutgoing) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                MessageStatusIcon(status = message.status)
+                            }
+                        }
                     }
                 }
             }
