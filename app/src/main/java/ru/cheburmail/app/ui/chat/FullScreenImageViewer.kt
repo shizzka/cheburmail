@@ -28,11 +28,11 @@ import java.io.File
 @Composable
 fun FullScreenImageViewer(
     imagePath: String,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = modifier
             .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {

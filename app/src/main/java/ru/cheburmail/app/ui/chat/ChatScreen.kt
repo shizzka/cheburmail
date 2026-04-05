@@ -49,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 
 /**
  * Экран переписки.
@@ -71,6 +72,9 @@ fun ChatScreen(
     val sendingMediaLabel by viewModel.sendingMediaLabel.collectAsState()
     val listState = rememberLazyListState()
 
+    // Full-screen image viewer state
+    var fullScreenImagePath by remember { mutableStateOf<String?>(null) }
+
     // Stop voice player when leaving the screen
     DisposableEffect(Unit) {
         onDispose { viewModel.voicePlayer.stop() }
@@ -81,6 +85,24 @@ fun ChatScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { viewModel.onFilePicked(it) }
+    }
+
+    // Gallery image picker launcher
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.onImagePicked(it) }
+    }
+
+    // Camera launcher — captures photo to prepared URI
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) {
+            pendingCameraUri?.let { viewModel.onImagePicked(it) }
+        }
+        pendingCameraUri = null
     }
 
     // RECORD_AUDIO permission launcher
@@ -112,61 +134,91 @@ fun ChatScreen(
             )
         }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .imePadding()
         ) {
-            // Список сообщений с pull-to-refresh
-            PullToRefreshBox(
-                isRefreshing = isRefreshing,
-                onRefresh = viewModel::refresh,
+            Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
+                    .fillMaxSize()
+                    .imePadding()
             ) {
-                LazyColumn(
-                    state = listState,
+                // Список сообщений с pull-to-refresh
+                PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = viewModel::refresh,
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 8.dp)
+                        .weight(1f)
+                        .fillMaxWidth()
                 ) {
-                    items(messages, key = { it.id }) { message ->
-                        MessageBubble(
-                            message = message,
-                            modifier = Modifier.padding(vertical = 4.dp),
-                            onSaveFile = viewModel::saveFileToDownloads,
-                            voicePlayer = viewModel.voicePlayer
-                        )
-                    }
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 8.dp)
+                    ) {
+                        items(messages, key = { it.id }) { message ->
+                            MessageBubble(
+                                message = message,
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                onImageClick = { path -> fullScreenImagePath = path },
+                                onSaveFile = viewModel::saveFileToDownloads,
+                                voicePlayer = viewModel.voicePlayer
+                            )
+                        }
 
-                    // Отступ снизу
-                    item {
-                        Spacer(modifier = Modifier.height(8.dp))
+                        // Отступ снизу
+                        item {
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
                     }
                 }
+
+                // Индикатор прогресса отправки медиафайла
+                SendProgressIndicator(
+                    visible = isSendingMedia,
+                    label = sendingMediaLabel
+                )
+
+                // Поле ввода
+                MessageInput(
+                    text = inputText,
+                    onTextChange = viewModel::updateInputText,
+                    onSend = viewModel::sendMessage,
+                    isRecordingVoice = isRecordingVoice,
+                    onStartRecording = {
+                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    },
+                    onStopRecording = viewModel::stopVoiceRecordingAndSend,
+                    onCancelRecording = viewModel::cancelVoiceRecording,
+                    onFilePickerOpen = { filePickerLauncher.launch(arrayOf("*/*")) },
+                    onGalleryOpen = {
+                        galleryLauncher.launch(
+                            androidx.activity.result.PickVisualMediaRequest(
+                                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly
+                            )
+                        )
+                    },
+                    onCameraOpen = {
+                        val uri = viewModel.prepareCameraUri()
+                        pendingCameraUri = uri
+                        cameraLauncher.launch(uri)
+                    }
+                )
             }
 
-            // Индикатор прогресса отправки медиафайла
-            SendProgressIndicator(
-                visible = isSendingMedia,
-                label = sendingMediaLabel
-            )
-
-            // Поле ввода
-            MessageInput(
-                text = inputText,
-                onTextChange = viewModel::updateInputText,
-                onSend = viewModel::sendMessage,
-                isRecordingVoice = isRecordingVoice,
-                onStartRecording = {
-                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                },
-                onStopRecording = viewModel::stopVoiceRecordingAndSend,
-                onCancelRecording = viewModel::cancelVoiceRecording,
-                onFilePickerOpen = { filePickerLauncher.launch(arrayOf("*/*")) }
-            )
+            // Полноэкранный просмотр изображения (overlay)
+            val imgPath = fullScreenImagePath
+            if (imgPath != null) {
+                FullScreenImageViewer(
+                    imagePath = imgPath,
+                    onClose = { fullScreenImagePath = null },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(10f)
+                )
+            }
         }
     }
 }
@@ -180,7 +232,9 @@ private fun MessageInput(
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit,
     onCancelRecording: () -> Unit,
-    onFilePickerOpen: () -> Unit
+    onFilePickerOpen: () -> Unit,
+    onGalleryOpen: () -> Unit = {},
+    onCameraOpen: () -> Unit = {}
 ) {
     var showAttachMenu by remember { mutableStateOf(false) }
 
@@ -204,6 +258,26 @@ private fun MessageInput(
                     expanded = showAttachMenu,
                     onDismissRequest = { showAttachMenu = false }
                 ) {
+                    DropdownMenuItem(
+                        text = { Text("Галерея") },
+                        leadingIcon = {
+                            Icon(Icons.Filled.Image, contentDescription = null)
+                        },
+                        onClick = {
+                            showAttachMenu = false
+                            onGalleryOpen()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Камера") },
+                        leadingIcon = {
+                            Icon(Icons.Filled.CameraAlt, contentDescription = null)
+                        },
+                        onClick = {
+                            showAttachMenu = false
+                            onCameraOpen()
+                        }
+                    )
                     DropdownMenuItem(
                         text = { Text("Файл") },
                         leadingIcon = {
