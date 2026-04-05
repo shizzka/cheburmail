@@ -24,8 +24,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
-import coil3.compose.AsyncImagePainter
-import coil3.compose.rememberAsyncImagePainter
 import ru.cheburmail.app.db.MediaDownloadStatus
 import ru.cheburmail.app.db.entity.MessageEntity
 import java.io.File
@@ -116,16 +114,6 @@ fun ImageMessageBubble(
                             }
                         }
                     } else {
-                        val painter = rememberAsyncImagePainter(
-                            model = if (thumbnailSource.startsWith("/")) {
-                                File(thumbnailSource)
-                            } else {
-                                thumbnailSource
-                            }
-                        )
-
-                        val painterState = painter.state
-
                         AsyncImage(
                             model = if (thumbnailSource.startsWith("/")) {
                                 File(thumbnailSource)
@@ -138,21 +126,6 @@ fun ImageMessageBubble(
                                 .widthIn(min = 120.dp, max = 280.dp)
                                 .height(200.dp)
                         )
-
-                        // Показываем спиннер пока изображение загружается Coil
-                        if (painterState is AsyncImagePainter.State.Loading) {
-                            Box(
-                                modifier = Modifier
-                                    .size(280.dp, 200.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(32.dp),
-                                    color = textColor.copy(alpha = 0.7f),
-                                    strokeWidth = 2.dp
-                                )
-                            }
-                        }
                     }
                 }
 
