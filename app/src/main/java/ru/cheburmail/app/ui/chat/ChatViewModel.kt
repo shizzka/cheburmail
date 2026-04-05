@@ -1,6 +1,7 @@
 package ru.cheburmail.app.ui.chat
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -17,6 +18,8 @@ import ru.cheburmail.app.crypto.CryptoProvider
 import ru.cheburmail.app.crypto.MessageEncryptor
 import ru.cheburmail.app.crypto.NonceGenerator
 import ru.cheburmail.app.db.ChatType
+import ru.cheburmail.app.db.MediaDownloadStatus
+import ru.cheburmail.app.db.MediaType
 import ru.cheburmail.app.db.MessageStatus
 import ru.cheburmail.app.db.QueueStatus
 import ru.cheburmail.app.db.dao.ChatDao
@@ -27,6 +30,13 @@ import ru.cheburmail.app.db.entity.ChatEntity
 import ru.cheburmail.app.db.entity.MessageEntity
 import ru.cheburmail.app.db.entity.SendQueueEntity
 import ru.cheburmail.app.crypto.MessageDecryptor
+import ru.cheburmail.app.media.FileSaver
+import ru.cheburmail.app.media.ImageCompressor
+import ru.cheburmail.app.media.MediaEncryptor
+import ru.cheburmail.app.media.MediaFileManager
+import ru.cheburmail.app.media.MediaMetadata
+import ru.cheburmail.app.media.VoicePlayer
+import ru.cheburmail.app.media.VoiceRecorder
 import ru.cheburmail.app.notification.NotificationHelper
 import ru.cheburmail.app.repository.AccountRepository
 import ru.cheburmail.app.storage.SecureKeyStorage
@@ -77,6 +87,21 @@ class ChatViewModel(
 
     // Cached recipient email from chat contact
     private var recipientEmail: String? = null
+
+    // ── Media helpers ──────────────────────────────────────────────────────
+    val voiceRecorder = VoiceRecorder(appContext)
+    val voicePlayer = VoicePlayer(appContext)
+    private val fileSaver = FileSaver(appContext)
+    private val mediaFileManager = MediaFileManager(appContext)
+
+    private val _isRecordingVoice = MutableStateFlow(false)
+    val isRecordingVoice: StateFlow<Boolean> = _isRecordingVoice.asStateFlow()
+
+    private val _isSendingMedia = MutableStateFlow(false)
+    val isSendingMedia: StateFlow<Boolean> = _isSendingMedia.asStateFlow()
+
+    private val _sendingMediaLabel = MutableStateFlow("Отправка...")
+    val sendingMediaLabel: StateFlow<String> = _sendingMediaLabel.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -267,6 +292,250 @@ class ChatViewModel(
                 Log.e(TAG, "Error sending message: ${e.message}", e)
             }
         }
+    }
+
+    /**
+     * Отправить файл, выбранный пользователем через file picker.
+     */
+    fun onFilePicked(uri: Uri) {
+        viewModelScope.launch {
+            val email = recipientEmail ?: run {
+                Log.e(TAG, "Recipient email not resolved for file send")
+                return@launch
+            }
+            _isSendingMedia.value = true
+            _sendingMediaLabel.value = "Отправка файла..."
+            try {
+                val bytes = withContext(Dispatchers.IO) {
+                    appContext.contentResolver.openInputStream(uri)?.readBytes()
+                } ?: run {
+                    Log.e(TAG, "Cannot read file URI: $uri")
+                    return@launch
+                }
+                val fileName = mediaFileManager.getFileName(uri) ?: "file"
+                val mimeType = mediaFileManager.getMimeType(uri)
+                val fileSize = bytes.size.toLong()
+
+                val msgId = UUID.randomUUID().toString()
+                val now = System.currentTimeMillis()
+
+                // Save locally
+                val localPath = withContext(Dispatchers.IO) {
+                    mediaFileManager.saveFile(msgId, bytes, fileName)
+                }
+
+                // Ensure chat exists
+                ensureChatExists()
+
+                val message = MessageEntity(
+                    id = msgId,
+                    chatId = chatId,
+                    isOutgoing = true,
+                    plaintext = "",
+                    status = MessageStatus.SENDING,
+                    timestamp = now,
+                    mediaType = MediaType.FILE,
+                    localMediaUri = localPath,
+                    fileName = fileName,
+                    fileSize = fileSize,
+                    mimeType = mimeType
+                )
+                messageDao.insert(message)
+
+                withContext(Dispatchers.IO) {
+                    encryptAndQueueMedia(
+                        msgId = msgId,
+                        recipientEmail = email,
+                        bytes = bytes,
+                        metadata = MediaMetadata(
+                            type = MediaMetadata.TYPE_FILE,
+                            fileName = fileName,
+                            fileSize = fileSize,
+                            mimeType = mimeType
+                        ),
+                        now = now
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending file: ${e.message}", e)
+            } finally {
+                _isSendingMedia.value = false
+            }
+        }
+    }
+
+    /** Начать запись голосового сообщения. */
+    fun startVoiceRecording() {
+        val msgId = UUID.randomUUID().toString()
+        voiceRecorder.start(msgId)
+        _isRecordingVoice.value = true
+    }
+
+    /** Остановить запись и отправить голосовое сообщение. */
+    fun stopVoiceRecordingAndSend() {
+        val result = voiceRecorder.stop()
+        _isRecordingVoice.value = false
+        if (result == null) {
+            Log.e(TAG, "Voice recording result is null")
+            return
+        }
+        val email = recipientEmail ?: run {
+            Log.e(TAG, "Recipient email not resolved for voice send")
+            result.file.delete()
+            return
+        }
+
+        viewModelScope.launch {
+            _isSendingMedia.value = true
+            _sendingMediaLabel.value = "Отправка голосового..."
+            try {
+                val bytes = withContext(Dispatchers.IO) { result.file.readBytes() }
+                val msgId = UUID.randomUUID().toString()
+                val now = System.currentTimeMillis()
+                val fileName = "voice_$msgId.m4a"
+
+                val localPath = withContext(Dispatchers.IO) {
+                    mediaFileManager.saveVoice(msgId, bytes, "m4a")
+                }
+
+                ensureChatExists()
+
+                val message = MessageEntity(
+                    id = msgId,
+                    chatId = chatId,
+                    isOutgoing = true,
+                    plaintext = "",
+                    status = MessageStatus.SENDING,
+                    timestamp = now,
+                    mediaType = MediaType.VOICE,
+                    localMediaUri = localPath,
+                    fileName = fileName,
+                    fileSize = bytes.size.toLong(),
+                    mimeType = "audio/mp4",
+                    voiceDurationMs = result.durationMs,
+                    waveformData = result.waveform
+                )
+                messageDao.insert(message)
+
+                withContext(Dispatchers.IO) {
+                    encryptAndQueueMedia(
+                        msgId = msgId,
+                        recipientEmail = email,
+                        bytes = bytes,
+                        metadata = MediaMetadata(
+                            type = MediaMetadata.TYPE_VOICE,
+                            fileName = fileName,
+                            fileSize = bytes.size.toLong(),
+                            mimeType = "audio/mp4",
+                            durationMs = result.durationMs,
+                            waveform = result.waveform
+                        ),
+                        now = now
+                    )
+                }
+                result.file.delete()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending voice: ${e.message}", e)
+                result.file.delete()
+            } finally {
+                _isSendingMedia.value = false
+            }
+        }
+    }
+
+    /** Отменить запись голосового сообщения. */
+    fun cancelVoiceRecording() {
+        voiceRecorder.cancel()
+        _isRecordingVoice.value = false
+    }
+
+    /** Сохранить входящий файл в папку Загрузки. */
+    fun saveFileToDownloads(messageId: String) {
+        viewModelScope.launch {
+            try {
+                val message = withContext(Dispatchers.IO) { messageDao.getByIdOnce(messageId) }
+                    ?: return@launch
+                val path = message.localMediaUri ?: return@launch
+                val fileName = message.fileName ?: "file"
+                val mimeType = message.mimeType ?: "application/octet-stream"
+                withContext(Dispatchers.IO) {
+                    val bytes = java.io.File(path).readBytes()
+                    fileSaver.saveToDownloads(fileName, mimeType, bytes)
+                }
+                Log.d(TAG, "Saved file to downloads: $fileName")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error saving file to downloads: ${e.message}")
+            }
+        }
+    }
+
+    private suspend fun ensureChatExists() {
+        val existing = chatDao.getById(chatId)
+        if (existing == null) {
+            val now = System.currentTimeMillis()
+            chatDao.insert(
+                ChatEntity(
+                    id = chatId,
+                    type = ChatType.DIRECT,
+                    title = _chatTitle.value,
+                    createdAt = now,
+                    updatedAt = now
+                )
+            )
+        }
+    }
+
+    private suspend fun encryptAndQueueMedia(
+        msgId: String,
+        recipientEmail: String,
+        bytes: ByteArray,
+        metadata: MediaMetadata,
+        now: Long
+    ) {
+        val contact = contactDao.getByEmail(recipientEmail) ?: run {
+            Log.e(TAG, "Contact not found: $recipientEmail")
+            return
+        }
+        val keyPair = keyStorage.getOrCreateKeyPair()
+        val ls = CryptoProvider.lazySodium
+        val encryptor = ru.cheburmail.app.media.MediaEncryptor(
+            MessageEncryptor(ls, NonceGenerator(ls))
+        )
+        val encrypted = encryptor.encrypt(
+            metadata = metadata,
+            fileBytes = bytes,
+            recipientPublicKey = contact.publicKey,
+            senderPrivateKey = keyPair.getPrivateKey()
+        )
+        // Queue metadata envelope
+        sendQueueDao.insert(
+            SendQueueEntity(
+                messageId = "${msgId}_meta",
+                recipientEmail = recipientEmail,
+                encryptedPayload = encrypted.metadataEnvelope.toBytes(),
+                status = QueueStatus.QUEUED,
+                createdAt = now,
+                updatedAt = now
+            )
+        )
+        // Queue payload envelope
+        sendQueueDao.insert(
+            SendQueueEntity(
+                messageId = msgId,
+                recipientEmail = recipientEmail,
+                encryptedPayload = encrypted.payloadEnvelope.toBytes(),
+                status = QueueStatus.QUEUED,
+                createdAt = now,
+                updatedAt = now
+            )
+        )
+        OutboxDrainWorker.enqueue(appContext)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        voiceRecorder.cancel()
+        voicePlayer.stop()
     }
 
     class Factory(
