@@ -43,3 +43,33 @@ enum class QueueStatus {
     SENT,
     FAILED
 }
+
+/**
+ * Тип медиавложения в сообщении.
+ * NONE — текстовое сообщение без вложений.
+ * IMAGE — изображение (JPEG, PNG и др.).
+ * FILE — произвольный файл.
+ * VOICE — голосовое сообщение.
+ */
+enum class MediaType {
+    NONE,
+    IMAGE,
+    FILE,
+    VOICE
+}
+
+/**
+ * Статус загрузки медиавложения на устройство.
+ * NONE — нет вложения или вложение уже доступно локально (исходящее).
+ * PENDING — ожидает загрузки.
+ * DOWNLOADING — загружается в данный момент.
+ * COMPLETED — загрузка завершена, файл доступен по local_media_uri.
+ * FAILED — загрузка не удалась.
+ */
+enum class MediaDownloadStatus {
+    NONE,
+    PENDING,
+    DOWNLOADING,
+    COMPLETED,
+    FAILED
+}
