@@ -1,5 +1,11 @@
 package ru.cheburmail.app.ui.chat
 
+import android.Manifest
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +21,14 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -25,9 +39,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -36,6 +54,7 @@ import androidx.compose.ui.unit.dp
  * Экран переписки.
  * LazyColumn с историей сообщений (автопрокрутка вниз), поле ввода и кнопка отправки.
  * Pull-to-refresh запускает синхронизацию.
+ * Поддерживает прикрепление файлов и голосовые сообщения.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,7 +66,29 @@ fun ChatScreen(
     val chatTitle by viewModel.chatTitle.collectAsState()
     val inputText by viewModel.inputText.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val isRecordingVoice by viewModel.isRecordingVoice.collectAsState()
+    val isSendingMedia by viewModel.isSendingMedia.collectAsState()
+    val sendingMediaLabel by viewModel.sendingMediaLabel.collectAsState()
     val listState = rememberLazyListState()
+
+    // Stop voice player when leaving the screen
+    DisposableEffect(Unit) {
+        onDispose { viewModel.voicePlayer.stop() }
+    }
+
+    // File picker launcher
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.onFilePicked(it) }
+    }
+
+    // RECORD_AUDIO permission launcher
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) viewModel.startVoiceRecording()
+    }
 
     // Автопрокрутка к последнему сообщению
     LaunchedEffect(messages.size) {
@@ -94,7 +135,9 @@ fun ChatScreen(
                     items(messages, key = { it.id }) { message ->
                         MessageBubble(
                             message = message,
-                            modifier = Modifier.padding(vertical = 4.dp)
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            onSaveFile = viewModel::saveFileToDownloads,
+                            voicePlayer = viewModel.voicePlayer
                         )
                     }
 
@@ -105,11 +148,24 @@ fun ChatScreen(
                 }
             }
 
+            // Индикатор прогресса отправки медиафайла
+            SendProgressIndicator(
+                visible = isSendingMedia,
+                label = sendingMediaLabel
+            )
+
             // Поле ввода
             MessageInput(
                 text = inputText,
                 onTextChange = viewModel::updateInputText,
-                onSend = viewModel::sendMessage
+                onSend = viewModel::sendMessage,
+                isRecordingVoice = isRecordingVoice,
+                onStartRecording = {
+                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                },
+                onStopRecording = viewModel::stopVoiceRecordingAndSend,
+                onCancelRecording = viewModel::cancelVoiceRecording,
+                onFilePickerOpen = { filePickerLauncher.launch(arrayOf("*/*")) }
             )
         }
     }
@@ -119,38 +175,96 @@ fun ChatScreen(
 private fun MessageInput(
     text: String,
     onTextChange: (String) -> Unit,
-    onSend: () -> Unit
+    onSend: () -> Unit,
+    isRecordingVoice: Boolean,
+    onStartRecording: () -> Unit,
+    onStopRecording: () -> Unit,
+    onCancelRecording: () -> Unit,
+    onFilePickerOpen: () -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Bottom
-    ) {
-        OutlinedTextField(
-            value = text,
-            onValueChange = onTextChange,
-            modifier = Modifier.weight(1f),
-            placeholder = { Text("Сообщение...") },
-            maxLines = 4,
-            shape = MaterialTheme.shapes.large
-        )
+    var showAttachMenu by remember { mutableStateOf(false) }
 
-        Spacer(modifier = Modifier.width(8.dp))
-
-        IconButton(
-            onClick = onSend,
-            enabled = text.isNotBlank()
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.Bottom
         ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.Send,
-                contentDescription = "Отправить",
-                tint = if (text.isNotBlank()) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
+            // Attach button with dropdown menu
+            Box {
+                IconButton(onClick = { showAttachMenu = true }) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = "Прикрепить",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+                DropdownMenu(
+                    expanded = showAttachMenu,
+                    onDismissRequest = { showAttachMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Файл") },
+                        leadingIcon = {
+                            Icon(Icons.Filled.AttachFile, contentDescription = null)
+                        },
+                        onClick = {
+                            showAttachMenu = false
+                            onFilePickerOpen()
+                        }
+                    )
+                }
+            }
+
+            OutlinedTextField(
+                value = text,
+                onValueChange = onTextChange,
+                modifier = Modifier.weight(1f),
+                placeholder = {
+                    Text(
+                        if (isRecordingVoice) "Запись..." else "Сообщение..."
+                    )
+                },
+                maxLines = 4,
+                shape = MaterialTheme.shapes.large,
+                enabled = !isRecordingVoice
             )
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            when {
+                // Text entered → Send button
+                text.isNotBlank() -> {
+                    IconButton(onClick = onSend) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Отправить",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                // Recording → Stop button
+                isRecordingVoice -> {
+                    IconButton(onClick = onStopRecording) {
+                        Icon(
+                            imageVector = Icons.Filled.Stop,
+                            contentDescription = "Остановить запись",
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+                // Idle → Mic button
+                else -> {
+                    IconButton(onClick = onStartRecording) {
+                        Icon(
+                            imageVector = Icons.Filled.Mic,
+                            contentDescription = "Записать голосовое",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
     }
 }
