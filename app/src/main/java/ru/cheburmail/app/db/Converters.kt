@@ -49,4 +49,20 @@ class Converters {
 
     @TypeConverter
     fun toQueueStatus(value: String): QueueStatus = QueueStatus.valueOf(value)
+
+    // --- MediaType ---
+
+    @TypeConverter
+    fun fromMediaType(value: MediaType): String = value.name
+
+    @TypeConverter
+    fun toMediaType(value: String): MediaType = MediaType.valueOf(value)
+
+    // --- MediaDownloadStatus ---
+
+    @TypeConverter
+    fun fromMediaDownloadStatus(value: MediaDownloadStatus): String = value.name
+
+    @TypeConverter
+    fun toMediaDownloadStatus(value: String): MediaDownloadStatus = MediaDownloadStatus.valueOf(value)
 }
