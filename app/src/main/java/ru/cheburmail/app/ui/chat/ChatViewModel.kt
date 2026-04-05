@@ -592,23 +592,23 @@ class ChatViewModel(
             recipientPublicKey = contact.publicKey,
             senderPrivateKey = keyPair.getPrivateKey()
         )
-        // Queue metadata envelope
-        sendQueueDao.insert(
-            SendQueueEntity(
-                messageId = "${msgId}_meta",
-                recipientEmail = recipientEmail,
-                encryptedPayload = encrypted.metadataEnvelope.toBytes(),
-                status = QueueStatus.QUEUED,
-                createdAt = now,
-                updatedAt = now
-            )
-        )
-        // Queue payload envelope
+        // Pack both envelopes into a single combined binary:
+        // [4-byte big-endian metadata length][metadata envelope bytes][payload envelope bytes]
+        val metaBytes = encrypted.metadataEnvelope.toBytes()
+        val payloadBytes = encrypted.payloadEnvelope.toBytes()
+        val combined = ByteArray(4 + metaBytes.size + payloadBytes.size)
+        combined[0] = (metaBytes.size shr 24).toByte()
+        combined[1] = (metaBytes.size shr 16).toByte()
+        combined[2] = (metaBytes.size shr 8).toByte()
+        combined[3] = metaBytes.size.toByte()
+        metaBytes.copyInto(combined, 4)
+        payloadBytes.copyInto(combined, 4 + metaBytes.size)
+
         sendQueueDao.insert(
             SendQueueEntity(
                 messageId = msgId,
                 recipientEmail = recipientEmail,
-                encryptedPayload = encrypted.payloadEnvelope.toBytes(),
+                encryptedPayload = combined,
                 status = QueueStatus.QUEUED,
                 createdAt = now,
                 updatedAt = now
