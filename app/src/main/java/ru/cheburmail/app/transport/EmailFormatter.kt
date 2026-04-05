@@ -33,6 +33,36 @@ class EmailFormatter(
         )
     }
 
+    /**
+     * Format a media message (image/file/voice) into an EmailMessage with /M suffix subject.
+     * Both metadataEnvelope (JSON) and payloadEnvelope (binary) are Base64-encoded.
+     * Body = Base64(metadataEnvelope wire bytes), Attachment = Base64(payloadEnvelope wire bytes).
+     *
+     * Subject: CM/1/<chatId>/<msgUuid>/M
+     * Content-Type: application/x-cheburmail-media
+     */
+    fun formatMedia(
+        metadataEnvelope: EncryptedEnvelope,
+        payloadEnvelope: EncryptedEnvelope,
+        chatId: String,
+        msgUuid: String,
+        fromEmail: String,
+        toEmail: String
+    ): EmailMessage {
+        val subject = "${EmailMessage.SUBJECT_PREFIX}$chatId/$msgUuid${EmailMessage.MEDIA_SUBJECT_SUFFIX}"
+        val metadataBytes = base64Encode(metadataEnvelope.toBytes())
+        val payloadBytes = base64Encode(payloadEnvelope.toBytes())
+
+        return EmailMessage(
+            from = fromEmail,
+            to = toEmail,
+            subject = subject,
+            body = metadataBytes,
+            contentType = EmailMessage.CHEBURMAIL_MEDIA_CONTENT_TYPE,
+            attachment = payloadBytes
+        )
+    }
+
     companion object {
         /**
          * Default Base64 encoder using java.util.Base64 (works on Android 26+ and JVM).
