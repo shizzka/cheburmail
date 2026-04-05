@@ -82,18 +82,30 @@ class SendWorker(
             // Выбираем аккаунт: мульти-аккаунт (round-robin) или одиночный
             val sendConfig = multiAccountManager?.getNextSendAccount() ?: emailConfig
 
-            // The encrypted payload is already stored in send_queue.
+            // Load payload: from file (large media) or from DB BLOB (text / small media)
+            val payload = if (entry.payloadFilePath != null) {
+                val file = java.io.File(entry.payloadFilePath)
+                if (!file.exists()) {
+                    Log.e(TAG, "Payload file not found: ${entry.payloadFilePath}, marking FAILED")
+                    sendQueueDao.updateStatus(entry.id, QueueStatus.FAILED)
+                    return
+                }
+                file.readBytes()
+            } else {
+                entry.encryptedPayload
+            }
+
             // For media messages the payload is: [4-byte metaLen][metaBytes][payloadBytes].
             // For text messages it is a plain EncryptedEnvelope wire encoding.
-            if (message.mediaType != MediaType.NONE && entry.encryptedPayload.size > 4) {
-                val metaLen = ((entry.encryptedPayload[0].toInt() and 0xff) shl 24) or
-                    ((entry.encryptedPayload[1].toInt() and 0xff) shl 16) or
-                    ((entry.encryptedPayload[2].toInt() and 0xff) shl 8) or
-                    (entry.encryptedPayload[3].toInt() and 0xff)
+            if (message.mediaType != MediaType.NONE && payload.size > 4) {
+                val metaLen = ((payload[0].toInt() and 0xff) shl 24) or
+                    ((payload[1].toInt() and 0xff) shl 16) or
+                    ((payload[2].toInt() and 0xff) shl 8) or
+                    (payload[3].toInt() and 0xff)
 
-                if (metaLen > 0 && 4 + metaLen < entry.encryptedPayload.size) {
-                    val metaBytes = entry.encryptedPayload.copyOfRange(4, 4 + metaLen)
-                    val payloadBytes = entry.encryptedPayload.copyOfRange(4 + metaLen, entry.encryptedPayload.size)
+                if (metaLen > 0 && 4 + metaLen < payload.size) {
+                    val metaBytes = payload.copyOfRange(4, 4 + metaLen)
+                    val payloadBytes = payload.copyOfRange(4 + metaLen, payload.size)
 
                     val metaEnvelope = EncryptedEnvelope.fromBytes(metaBytes)
                     val payloadEnvelope = EncryptedEnvelope.fromBytes(payloadBytes)
@@ -109,7 +121,7 @@ class SendWorker(
                     smtpClient.sendWithAttachment(sendConfig, emailMessage)
                 } else {
                     Log.e(TAG, "Invalid media payload for $msgId, falling back to text send")
-                    val envelope = EncryptedEnvelope.fromBytes(entry.encryptedPayload)
+                    val envelope = EncryptedEnvelope.fromBytes(payload)
                     val emailMessage = emailFormatter.format(
                         envelope = envelope,
                         chatId = message.chatId,
@@ -120,7 +132,7 @@ class SendWorker(
                     smtpClient.send(sendConfig, emailMessage)
                 }
             } else {
-                val envelope = EncryptedEnvelope.fromBytes(entry.encryptedPayload)
+                val envelope = EncryptedEnvelope.fromBytes(payload)
                 val emailMessage = emailFormatter.format(
                     envelope = envelope,
                     chatId = message.chatId,
@@ -129,6 +141,11 @@ class SendWorker(
                     toEmail = entry.recipientEmail
                 )
                 smtpClient.send(sendConfig, emailMessage)
+            }
+
+            // Clean up payload file after successful send
+            if (entry.payloadFilePath != null) {
+                try { java.io.File(entry.payloadFilePath).delete() } catch (_: Exception) {}
             }
 
             // Фиксируем отправку для rate limit tracking

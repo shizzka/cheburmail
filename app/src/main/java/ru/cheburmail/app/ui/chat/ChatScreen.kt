@@ -113,9 +113,10 @@ fun ChatScreen(
     }
 
     // Автопрокрутка к последнему сообщению
+    // Учитываем +1 для Spacer item в конце LazyColumn
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+            listState.scrollToItem(messages.size)
         }
     }
 

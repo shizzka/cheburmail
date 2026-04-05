@@ -35,6 +35,10 @@ data class SendQueueEntity(
     @ColumnInfo(name = "encrypted_payload")
     val encryptedPayload: ByteArray,
 
+    /** Path to file with encrypted payload (for large media). If set, encryptedPayload is empty. */
+    @ColumnInfo(name = "payload_file_path")
+    val payloadFilePath: String? = null,
+
     @ColumnInfo(name = "status")
     val status: QueueStatus = QueueStatus.QUEUED,
 
