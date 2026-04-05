@@ -4,6 +4,7 @@ import android.util.Log
 import ru.cheburmail.app.account.MultiAccountManager
 import ru.cheburmail.app.crypto.CryptoException
 import ru.cheburmail.app.crypto.model.EncryptedEnvelope
+import ru.cheburmail.app.db.MediaType
 import ru.cheburmail.app.db.MessageStatus
 import ru.cheburmail.app.db.QueueStatus
 import ru.cheburmail.app.db.dao.ContactDao
@@ -82,17 +83,53 @@ class SendWorker(
             val sendConfig = multiAccountManager?.getNextSendAccount() ?: emailConfig
 
             // The encrypted payload is already stored in send_queue.
-            // Parse it as EncryptedEnvelope and format + send via SMTP.
-            val envelope = EncryptedEnvelope.fromBytes(entry.encryptedPayload)
-            val emailMessage = emailFormatter.format(
-                envelope = envelope,
-                chatId = message.chatId,
-                msgUuid = message.id,
-                fromEmail = sendConfig.email,
-                toEmail = entry.recipientEmail
-            )
+            // For media messages the payload is: [4-byte metaLen][metaBytes][payloadBytes].
+            // For text messages it is a plain EncryptedEnvelope wire encoding.
+            if (message.mediaType != MediaType.NONE && entry.encryptedPayload.size > 4) {
+                val metaLen = ((entry.encryptedPayload[0].toInt() and 0xff) shl 24) or
+                    ((entry.encryptedPayload[1].toInt() and 0xff) shl 16) or
+                    ((entry.encryptedPayload[2].toInt() and 0xff) shl 8) or
+                    (entry.encryptedPayload[3].toInt() and 0xff)
 
-            smtpClient.send(sendConfig, emailMessage)
+                if (metaLen > 0 && 4 + metaLen < entry.encryptedPayload.size) {
+                    val metaBytes = entry.encryptedPayload.copyOfRange(4, 4 + metaLen)
+                    val payloadBytes = entry.encryptedPayload.copyOfRange(4 + metaLen, entry.encryptedPayload.size)
+
+                    val metaEnvelope = EncryptedEnvelope.fromBytes(metaBytes)
+                    val payloadEnvelope = EncryptedEnvelope.fromBytes(payloadBytes)
+
+                    val emailMessage = emailFormatter.formatMedia(
+                        metadataEnvelope = metaEnvelope,
+                        payloadEnvelope = payloadEnvelope,
+                        chatId = message.chatId,
+                        msgUuid = message.id,
+                        fromEmail = sendConfig.email,
+                        toEmail = entry.recipientEmail
+                    )
+                    smtpClient.sendWithAttachment(sendConfig, emailMessage)
+                } else {
+                    Log.e(TAG, "Invalid media payload for $msgId, falling back to text send")
+                    val envelope = EncryptedEnvelope.fromBytes(entry.encryptedPayload)
+                    val emailMessage = emailFormatter.format(
+                        envelope = envelope,
+                        chatId = message.chatId,
+                        msgUuid = message.id,
+                        fromEmail = sendConfig.email,
+                        toEmail = entry.recipientEmail
+                    )
+                    smtpClient.send(sendConfig, emailMessage)
+                }
+            } else {
+                val envelope = EncryptedEnvelope.fromBytes(entry.encryptedPayload)
+                val emailMessage = emailFormatter.format(
+                    envelope = envelope,
+                    chatId = message.chatId,
+                    msgUuid = message.id,
+                    fromEmail = sendConfig.email,
+                    toEmail = entry.recipientEmail
+                )
+                smtpClient.send(sendConfig, emailMessage)
+            }
 
             // Фиксируем отправку для rate limit tracking
             multiAccountManager?.recordSend(sendConfig.email)
