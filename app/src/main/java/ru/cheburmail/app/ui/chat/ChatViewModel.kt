@@ -184,6 +184,7 @@ class ChatViewModel(
                         contactDao = db.contactDao(),
                         keyStorage = keyStorage
                     )
+                    val mediaDecryptor = ru.cheburmail.app.media.MediaDecryptor(decryptor)
                     val receiveWorker = ReceiveWorker(
                         transportService = transportService,
                         decryptor = decryptor,
@@ -194,7 +195,9 @@ class ChatViewModel(
                         notificationHelper = NotificationHelper(appContext),
                         recipientPrivateKey = keyPair.getPrivateKey(),
                         keyExchangeManager = keyExchangeManager,
-                        emailConfig = config
+                        emailConfig = config,
+                        mediaDecryptor = mediaDecryptor,
+                        mediaFileManager = mediaFileManager
                     )
 
                     val received = receiveWorker.pollAndProcess(config)
