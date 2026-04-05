@@ -42,6 +42,13 @@ class OutboxDrainWorker(
 
         val db = CheburMailDatabase.getInstance(applicationContext)
 
+        // Cleanup: delete queue entries with oversized BLOBs that crash CursorWindow
+        try {
+            db.openHelper.writableDatabase.execSQL(
+                "DELETE FROM send_queue WHERE LENGTH(encrypted_payload) > 1000000 AND payload_file_path IS NULL"
+            )
+        } catch (_: Exception) {}
+
         // Проверяем наличие элементов в очереди
         val pendingCount = db.sendQueueDao().countPending()
         if (pendingCount == 0) {
