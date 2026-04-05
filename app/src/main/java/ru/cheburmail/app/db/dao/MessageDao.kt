@@ -5,6 +5,8 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
+import ru.cheburmail.app.db.MediaDownloadStatus
+import ru.cheburmail.app.db.MediaType
 import ru.cheburmail.app.db.MessageStatus
 import ru.cheburmail.app.db.entity.MessageEntity
 
@@ -61,4 +63,21 @@ interface MessageDao {
      */
     @Query("DELETE FROM messages WHERE chat_id = :chatId")
     suspend fun deleteByChatId(chatId: String)
+
+    /**
+     * Обновить медиа-данные сообщения (URI файла, миниатюра, статус загрузки).
+     */
+    @Query("""
+        UPDATE messages
+        SET local_media_uri = :localUri,
+            thumbnail_uri   = :thumbnailUri,
+            media_download_status = :downloadStatus
+        WHERE id = :messageId
+    """)
+    suspend fun updateMedia(
+        messageId: String,
+        localUri: String?,
+        thumbnailUri: String?,
+        downloadStatus: MediaDownloadStatus
+    )
 }
