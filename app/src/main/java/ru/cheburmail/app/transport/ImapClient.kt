@@ -12,6 +12,30 @@ import javax.mail.search.FlagTerm
 import javax.mail.search.SubjectTerm
 
 /**
+ * Represents extracted media parts from a multipart/mixed CheburMail media email.
+ *
+ * @property metadataBytes raw bytes of Part 0 (encrypted metadata)
+ * @property payloadBytes raw bytes of Part 1 (encrypted file payload, "payload.enc")
+ */
+data class ExtractedMediaParts(
+    val metadataBytes: ByteArray,
+    val payloadBytes: ByteArray
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is ExtractedMediaParts) return false
+        return metadataBytes.contentEquals(other.metadataBytes) &&
+            payloadBytes.contentEquals(other.payloadBytes)
+    }
+
+    override fun hashCode(): Int {
+        var result = metadataBytes.contentHashCode()
+        result = 31 * result + payloadBytes.contentHashCode()
+        return result
+    }
+}
+
+/**
  * Fetches email messages via IMAP over SSL.
  * Blocking — call from a background thread or coroutine dispatcher.
  */
@@ -58,7 +82,13 @@ open class ImapClient {
                         val from = normalizeEmail(rawFrom)
                         val rawTo = msg.allRecipients?.firstOrNull()?.toString() ?: ""
                         val to = normalizeEmail(rawTo)
-                        val contentType = EmailMessage.CHEBURMAIL_CONTENT_TYPE
+                        val isMedia = subject.endsWith(EmailMessage.MEDIA_SUBJECT_SUFFIX)
+                        val contentType = if (isMedia) {
+                            EmailMessage.CHEBURMAIL_MEDIA_CONTENT_TYPE
+                        } else {
+                            EmailMessage.CHEBURMAIL_CONTENT_TYPE
+                        }
+                        val attachmentBytes = if (isMedia) extractAttachment(msg) else null
 
                         result.add(
                             EmailMessage(
@@ -66,7 +96,8 @@ open class ImapClient {
                                 to = to,
                                 subject = subject,
                                 body = bodyBytes,
-                                contentType = contentType
+                                contentType = contentType,
+                                attachment = attachmentBytes
                             )
                         )
 
@@ -227,6 +258,33 @@ open class ImapClient {
                 message.writeTo(bos)
                 bos.toByteArray()
             }
+        }
+    }
+
+    /**
+     * Extract the payload attachment (Part 1) from a multipart/mixed media message.
+     * Returns null if the message is not multipart or has fewer than 2 parts.
+     */
+    private fun extractAttachment(message: javax.mail.Message): ByteArray? {
+        val content = message.content
+        if (content !is javax.mail.Multipart) return null
+        if (content.count < 2) return null
+        return try {
+            val part = content.getBodyPart(1)
+            val partContent = part.content
+            when (partContent) {
+                is ByteArray -> partContent
+                is InputStream -> partContent.use { it.readBytes() }
+                is String -> partContent.toByteArray(Charsets.UTF_8)
+                else -> {
+                    val bos = ByteArrayOutputStream()
+                    part.writeTo(bos)
+                    bos.toByteArray()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error extracting attachment from media message: ${e.message}")
+            null
         }
     }
 
