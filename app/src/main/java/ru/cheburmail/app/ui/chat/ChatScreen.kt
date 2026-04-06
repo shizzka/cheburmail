@@ -4,7 +4,6 @@ import android.Manifest
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -112,8 +111,12 @@ fun ChatScreen(
         if (granted) viewModel.startVoiceRecording()
     }
 
-    // С reverseLayout=true LazyColumn автоматически "прилипает" к низу —
-    // новые сообщения появляются внизу без ручного скролла.
+    // Автопрокрутка к последнему сообщению
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -130,89 +133,86 @@ fun ChatScreen(
             )
         }
     ) { innerPadding ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .imePadding()
         ) {
-            Column(
+            // Список сообщений с pull-to-refresh
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = viewModel::refresh,
                 modifier = Modifier
-                    .fillMaxSize()
-                    .imePadding()
+                    .weight(1f)
+                    .fillMaxWidth()
             ) {
-                // Список сообщений с pull-to-refresh
-                PullToRefreshBox(
-                    isRefreshing = isRefreshing,
-                    onRefresh = viewModel::refresh,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                ) {
-                    LazyColumn(
-                        state = listState,
-                        reverseLayout = true,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 8.dp)
-                    ) {
-                        // reverseLayout=true рендерит item(0) внизу,
-                        // поэтому передаём reversed список
-                        items(messages.reversed(), key = { it.id }) { message ->
-                            MessageBubble(
-                                message = message,
-                                modifier = Modifier.padding(vertical = 4.dp),
-                                onImageClick = { path -> fullScreenImagePath = path },
-                                onSaveFile = viewModel::saveFileToDownloads,
-                                voicePlayer = viewModel.voicePlayer
-                            )
-                        }
-                    }
-                }
-
-                // Индикатор прогресса отправки медиафайла
-                SendProgressIndicator(
-                    visible = isSendingMedia,
-                    label = sendingMediaLabel
-                )
-
-                // Поле ввода
-                MessageInput(
-                    text = inputText,
-                    onTextChange = viewModel::updateInputText,
-                    onSend = viewModel::sendMessage,
-                    isRecordingVoice = isRecordingVoice,
-                    onStartRecording = {
-                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    },
-                    onStopRecording = viewModel::stopVoiceRecordingAndSend,
-                    onCancelRecording = viewModel::cancelVoiceRecording,
-                    onFilePickerOpen = { filePickerLauncher.launch(arrayOf("*/*")) },
-                    onGalleryOpen = {
-                        galleryLauncher.launch(
-                            androidx.activity.result.PickVisualMediaRequest(
-                                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly
-                            )
-                        )
-                    },
-                    onCameraOpen = {
-                        val uri = viewModel.prepareCameraUri()
-                        pendingCameraUri = uri
-                        cameraLauncher.launch(uri)
-                    }
-                )
-            }
-
-            // Полноэкранный просмотр изображения (overlay)
-            val imgPath = fullScreenImagePath
-            if (imgPath != null) {
-                FullScreenImageViewer(
-                    imagePath = imgPath,
-                    onClose = { fullScreenImagePath = null },
+                LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .zIndex(10f)
-                )
+                        .padding(horizontal = 8.dp)
+                ) {
+                    items(messages, key = { it.id }) { message ->
+                        MessageBubble(
+                            message = message,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            onImageClick = { path -> fullScreenImagePath = path },
+                            onSaveFile = viewModel::saveFileToDownloads,
+                            voicePlayer = viewModel.voicePlayer
+                        )
+                    }
+
+                    // Отступ снизу
+                    item {
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                }
             }
+
+            // Индикатор прогресса отправки медиафайла
+            SendProgressIndicator(
+                visible = isSendingMedia,
+                label = sendingMediaLabel
+            )
+
+            // Поле ввода
+            MessageInput(
+                text = inputText,
+                onTextChange = viewModel::updateInputText,
+                onSend = viewModel::sendMessage,
+                isRecordingVoice = isRecordingVoice,
+                onStartRecording = {
+                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                },
+                onStopRecording = viewModel::stopVoiceRecordingAndSend,
+                onCancelRecording = viewModel::cancelVoiceRecording,
+                onFilePickerOpen = { filePickerLauncher.launch(arrayOf("*/*")) },
+                onGalleryOpen = {
+                    galleryLauncher.launch(
+                        androidx.activity.result.PickVisualMediaRequest(
+                            androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly
+                        )
+                    )
+                },
+                onCameraOpen = {
+                    val uri = viewModel.prepareCameraUri()
+                    pendingCameraUri = uri
+                    cameraLauncher.launch(uri)
+                }
+            )
+        }
+
+        // Полноэкранный просмотр изображения (overlay)
+        val imgPath = fullScreenImagePath
+        if (imgPath != null) {
+            FullScreenImageViewer(
+                imagePath = imgPath,
+                onClose = { fullScreenImagePath = null },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(10f)
+            )
         }
     }
 }
