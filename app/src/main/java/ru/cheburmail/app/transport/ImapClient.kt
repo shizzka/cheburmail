@@ -68,15 +68,32 @@ open class ImapClient {
 
             folder.open(Folder.READ_WRITE)
             try {
-                // Fetch ALL CM messages — deduplication happens in ReceiveWorker
-                val messages = folder.messages
+                // Fetch only UNSEEN messages — already processed ones are marked SEEN
+                val messages = folder.search(FlagTerm(Flags(Flags.Flag.SEEN), false))
 
                 val result = mutableListOf<EmailMessage>()
-                for (msg in messages) {
+                if (messages.size > MAX_FETCH_COUNT) {
+                    Log.w(TAG, "Too many unseen messages (${messages.size}), processing last $MAX_FETCH_COUNT")
+                }
+                val toProcess = if (messages.size > MAX_FETCH_COUNT) {
+                    messages.takeLast(MAX_FETCH_COUNT).toTypedArray()
+                } else {
+                    messages
+                }
+
+                for (msg in toProcess) {
                     val subject = msg.subject ?: continue
                     if (!subject.startsWith(EmailMessage.SUBJECT_PREFIX)) continue
 
                     try {
+                        // Skip oversized messages to prevent OOM
+                        val msgSize = msg.size
+                        if (msgSize > MAX_MESSAGE_SIZE) {
+                            Log.w(TAG, "Skipping oversized message $subject (${msgSize / 1024}KB)")
+                            msg.setFlag(Flags.Flag.SEEN, true)
+                            continue
+                        }
+
                         val bodyBytes = extractBody(msg)
                         val rawFrom = msg.from?.firstOrNull()?.toString() ?: continue
                         val from = normalizeEmail(rawFrom)
@@ -303,5 +320,7 @@ open class ImapClient {
     companion object {
         private const val TAG = "ImapClient"
         const val CHEBURMAIL_FOLDER = "CheburMail"
+        private const val MAX_FETCH_COUNT = 200
+        private const val MAX_MESSAGE_SIZE = 50 * 1024 * 1024 // 50MB
     }
 }
