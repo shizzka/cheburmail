@@ -54,6 +54,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            manifestPlaceholders["isDebugBuild"] = "true"
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -62,6 +65,7 @@ android {
                 "proguard-rules.pro"
             )
             signingConfig = signingConfigs.getByName("release")
+            manifestPlaceholders["isDebugBuild"] = "false"
         }
     }
 

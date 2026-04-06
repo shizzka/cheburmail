@@ -83,7 +83,8 @@ class MediaFileManager(private val context: Context) {
      * @return абсолютный путь к файлу
      */
     fun saveFile(messageId: String, bytes: ByteArray, fileName: String): String {
-        val file = File(filesDir, "${messageId}_$fileName")
+        val safeName = fileName.replace("/", "_").replace("\\", "_").replace("..", "_")
+        val file = File(filesDir, "${messageId}_$safeName")
         file.writeBytes(bytes)
         return file.absolutePath
     }

@@ -43,7 +43,7 @@ log = logging.getLogger("distro-bot")
 
 # --- Config ---
 
-BOT_TOKEN = "***REDACTED_BOT_TOKEN***"
+BOT_TOKEN = os.getenv("CHEBURMAIL_BOT_TOKEN", "")
 
 APK_DEBUG = Path("/home/q/cheburmail/app/build/outputs/apk/debug/app-debug.apk")
 APK_RELEASE = Path("/home/q/cheburmail/app/build/outputs/apk/release/app-release.apk")

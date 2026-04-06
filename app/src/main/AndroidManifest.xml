@@ -45,7 +45,7 @@
 
         <receiver
             android:name=".debug.DebugReceiver"
-            android:enabled="true"
+            android:enabled="${isDebugBuild}"
             android:exported="false">
             <intent-filter>
                 <action android:name="ru.cheburmail.app.DEBUG" />
