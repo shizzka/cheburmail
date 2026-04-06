@@ -77,18 +77,16 @@ class ImapIdleService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val email = intent?.getStringExtra(EXTRA_EMAIL)
-        val password = intent?.getStringExtra(EXTRA_PASSWORD)
-        val imapHost = intent?.getStringExtra(EXTRA_IMAP_HOST)
-        val imapPort = intent?.getIntExtra(EXTRA_IMAP_PORT, 993) ?: 993
-
-        if (email == null || password == null || imapHost == null) {
-            Log.e(TAG, "Не переданы данные аккаунта, останавливаем сервис")
-            stopSelf()
-            return START_NOT_STICKY
+        serviceScope.launch {
+            val accountRepo = AccountRepository.create(applicationContext)
+            val config = accountRepo.getActive()
+            if (config == null) {
+                Log.e(TAG, "Нет активного аккаунта, останавливаем сервис")
+                stopSelf()
+                return@launch
+            }
+            startIdleLoop(config.email, config.password, config.imapHost, config.imapPort)
         }
-
-        startIdleLoop(email, password, imapHost, imapPort)
         return START_STICKY
     }
 
@@ -253,10 +251,6 @@ class ImapIdleService : Service() {
 
     companion object {
         private const val TAG = "ImapIdleService"
-        const val EXTRA_EMAIL = "extra_email"
-        const val EXTRA_PASSWORD = "extra_password"
-        const val EXTRA_IMAP_HOST = "extra_imap_host"
-        const val EXTRA_IMAP_PORT = "extra_imap_port"
 
         private const val INITIAL_BACKOFF_MS = 5_000L
         private const val MAX_BACKOFF_MS = 300_000L // 5 мин
@@ -265,17 +259,10 @@ class ImapIdleService : Service() {
 
         /**
          * Создать Intent для запуска сервиса.
+         * Credentials загружаются из AccountRepository внутри сервиса.
          */
-        fun createIntent(
-            context: Context,
-            config: EmailConfig
-        ): Intent {
-            return Intent(context, ImapIdleService::class.java).apply {
-                putExtra(EXTRA_EMAIL, config.email)
-                putExtra(EXTRA_PASSWORD, config.password)
-                putExtra(EXTRA_IMAP_HOST, config.imapHost)
-                putExtra(EXTRA_IMAP_PORT, config.imapPort)
-            }
+        fun createIntent(context: Context): Intent {
+            return Intent(context, ImapIdleService::class.java)
         }
     }
 }
