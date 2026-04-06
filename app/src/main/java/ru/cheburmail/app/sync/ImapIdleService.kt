@@ -143,6 +143,7 @@ class ImapIdleService : Service() {
             put("mail.imap.host", imapHost)
             put("mail.imap.port", imapPort.toString())
             put("mail.imap.ssl.enable", "true")
+            put("mail.imap.ssl.checkserveridentity", "true")
             put("mail.imap.connectiontimeout", "30000")
             put("mail.imap.timeout", "30000")
         }
