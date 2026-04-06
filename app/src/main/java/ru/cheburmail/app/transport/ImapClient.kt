@@ -4,6 +4,8 @@ import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.util.Properties
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
 import javax.mail.Flags
 import javax.mail.Folder
 import javax.mail.Session
@@ -50,6 +52,10 @@ open class ImapClient {
      * @throws TransportException.ImapException on errors
      */
     open fun fetchMessages(config: EmailConfig): List<EmailMessage> {
+        if (!FETCH_LOCK.tryLock(30, TimeUnit.SECONDS)) {
+            Log.d(TAG, "fetchMessages skipped — another fetch is in progress (30s timeout)")
+            return emptyList()
+        }
         var store: Store? = null
         try {
             store = connectStore(config)
@@ -68,18 +74,20 @@ open class ImapClient {
 
             folder.open(Folder.READ_WRITE)
             try {
-                // Fetch only UNSEEN messages — already processed ones are marked SEEN
-                val messages = folder.search(FlagTerm(Flags(Flags.Flag.SEEN), false))
+                val totalCM = folder.messageCount
+                Log.d(TAG, "CheburMail: $totalCM всего")
+
+                // Fetch ALL messages — deduplication happens in ReceiveWorker by msgUuid.
+                // Previously we fetched only UNSEEN, but messages marked SEEN by
+                // web-client or server were permanently skipped.
+                val scanCount = minOf(MAX_FETCH_COUNT, totalCM)
+                val toProcess = if (scanCount > 0) {
+                    folder.getMessages(totalCM - scanCount + 1, totalCM)
+                } else {
+                    emptyArray()
+                }
 
                 val result = mutableListOf<EmailMessage>()
-                if (messages.size > MAX_FETCH_COUNT) {
-                    Log.w(TAG, "Too many unseen messages (${messages.size}), processing last $MAX_FETCH_COUNT")
-                }
-                val toProcess = if (messages.size > MAX_FETCH_COUNT) {
-                    messages.takeLast(MAX_FETCH_COUNT).toTypedArray()
-                } else {
-                    messages
-                }
 
                 for (msg in toProcess) {
                     val subject = msg.subject ?: continue
@@ -90,7 +98,6 @@ open class ImapClient {
                         val msgSize = msg.size
                         if (msgSize > MAX_MESSAGE_SIZE) {
                             Log.w(TAG, "Skipping oversized message $subject (${msgSize / 1024}KB)")
-                            msg.setFlag(Flags.Flag.SEEN, true)
                             continue
                         }
 
@@ -117,9 +124,6 @@ open class ImapClient {
                                 attachment = attachmentBytes
                             )
                         )
-
-                        // Mark as SEEN after successful extraction
-                        msg.setFlag(Flags.Flag.SEEN, true)
                     } catch (e: Exception) {
                         Log.e(TAG, "Error extracting message ${msg.subject}: ${e.message}")
                         // Don't mark as SEEN — will retry next cycle
@@ -138,6 +142,7 @@ open class ImapClient {
             throw TransportException.ImapException("IMAP fetch failed: ${e.message}", e)
         } finally {
             store?.close()
+            FETCH_LOCK.unlock()
         }
     }
 
@@ -221,9 +226,35 @@ open class ImapClient {
 
         inbox.open(Folder.READ_WRITE)
         try {
-            val cmMessages = inbox.search(SubjectTerm("CM/1/"))
+            // Диагностика: сколько всего сообщений в INBOX
+            val totalInbox = inbox.messageCount
+            val unseenInbox = inbox.unreadMessageCount
+            if (totalInbox > 0) {
+                Log.d(TAG, "INBOX: $totalInbox всего, $unseenInbox непрочитанных")
+            }
+
+            // Сначала пробуем IMAP SEARCH по Subject
+            var cmMessages = inbox.search(SubjectTerm("CM/1/"))
+
+            // Fallback: на Mail.ru/bk.ru SubjectTerm может не работать с encoded subjects.
+            // Сканируем последние N сообщений вручную.
+            if (cmMessages.isEmpty() && totalInbox > 0) {
+                val scanCount = minOf(50, totalInbox)
+                val startIdx = totalInbox - scanCount + 1
+                val recent = inbox.getMessages(startIdx, totalInbox)
+                val manual = recent.filter { msg ->
+                    try {
+                        msg.subject?.startsWith("CM/1/") == true
+                    } catch (e: Exception) { false }
+                }
+                if (manual.isNotEmpty()) {
+                    Log.w(TAG, "SubjectTerm не нашёл, но ручной скан нашёл ${manual.size} CM/1/ сообщений")
+                    cmMessages = manual.toTypedArray()
+                }
+            }
+
             if (cmMessages.isEmpty()) {
-                android.util.Log.d(TAG, "В INBOX нет сообщений CM/1/")
+                Log.d(TAG, "В INBOX нет сообщений CM/1/")
                 return
             }
 
@@ -322,5 +353,7 @@ open class ImapClient {
         const val CHEBURMAIL_FOLDER = "CheburMail"
         private const val MAX_FETCH_COUNT = 200
         private const val MAX_MESSAGE_SIZE = 50 * 1024 * 1024 // 50MB
+        /** Prevents parallel IMAP fetches from multiple callers. */
+        private val FETCH_LOCK = ReentrantLock()
     }
 }
