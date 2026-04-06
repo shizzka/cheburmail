@@ -120,8 +120,8 @@ class ReceiveWorker(
                 }
 
                 // Deduplication check BEFORE decryption — saves CPU
-                if (messageDao.existsById(msg.msgUuid)) {
-                    Log.d(TAG, "Duplicate message ${msg.msgUuid}, skipping")
+                if (messageDao.existsById(msg.msgUuid) || messageDao.isDeleted(msg.msgUuid)) {
+                    Log.d(TAG, "Duplicate/deleted message ${msg.msgUuid}, skipping")
                     continue
                 }
 
@@ -146,6 +146,18 @@ class ReceiveWorker(
                 if (textStr.startsWith("DELETE:")) {
                     val targetMsgId = textStr.removePrefix("DELETE:")
                     messageDao.deleteById(targetMsgId)
+                    messageDao.insertDeleted(
+                        ru.cheburmail.app.db.entity.DeletedMessageEntity(targetMsgId)
+                    )
+                    // Удаляем оригинальное сообщение из IMAP у получателя
+                    if (emailConfig != null) {
+                        try {
+                            ImapClient().deleteFromImap(emailConfig, targetMsgId)
+                            Log.d(TAG, "Deleted from IMAP: $targetMsgId")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to delete from IMAP: ${e.message}")
+                        }
+                    }
                     Log.i(TAG, "Deleted message $targetMsgId by remote request from ${msg.fromEmail}")
                     continue
                 }
@@ -166,15 +178,30 @@ class ReceiveWorker(
                     }
                 }
 
+                // Parse reply metadata (format: "REPLY:<id>\n<quote>\n<text>")
+                var actualText = textStr
+                var replyToId: String? = null
+                var replyToText: String? = null
+                if (textStr.startsWith("REPLY:")) {
+                    val lines = textStr.split("\n", limit = 3)
+                    if (lines.size >= 3) {
+                        replyToId = lines[0].removePrefix("REPLY:")
+                        replyToText = lines[1]
+                        actualText = lines[2]
+                    }
+                }
+
                 // Save to Room
                 val entity = MessageEntity(
                     id = msg.msgUuid,
                     chatId = msg.chatId,
                     senderContactId = contact.id,
                     isOutgoing = false,
-                    plaintext = textStr,
+                    plaintext = actualText,
                     status = MessageStatus.RECEIVED,
-                    timestamp = now
+                    timestamp = now,
+                    replyToId = replyToId,
+                    replyToText = replyToText
                 )
                 messageDao.insert(entity)
                 savedCount++
@@ -184,7 +211,7 @@ class ReceiveWorker(
                 // Show notification
                 notificationHelper?.showMessageNotification(
                     senderName = contact.displayName,
-                    preview = textStr.take(100),
+                    preview = actualText.take(100),
                     chatId = msg.chatId
                 )
 
@@ -215,8 +242,8 @@ class ReceiveWorker(
         if (mediaDecryptor != null && mediaFileManager != null) {
             for (mediaMsg in received.mediaMessages) {
                 try {
-                    if (messageDao.existsById(mediaMsg.msgUuid)) {
-                        Log.d(TAG, "Duplicate media message ${mediaMsg.msgUuid}, skipping")
+                    if (messageDao.existsById(mediaMsg.msgUuid) || messageDao.isDeleted(mediaMsg.msgUuid)) {
+                        Log.d(TAG, "Duplicate/deleted media message ${mediaMsg.msgUuid}, skipping")
                         continue
                     }
 

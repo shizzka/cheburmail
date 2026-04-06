@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.Flow
 import ru.cheburmail.app.db.MediaDownloadStatus
 import ru.cheburmail.app.db.MediaType
 import ru.cheburmail.app.db.MessageStatus
+import ru.cheburmail.app.db.entity.DeletedMessageEntity
 import ru.cheburmail.app.db.entity.MessageEntity
 
 @Dao
@@ -86,4 +87,12 @@ interface MessageDao {
         thumbnailUri: String?,
         downloadStatus: MediaDownloadStatus
     )
+
+    // ── Deleted messages tracking ────────────────────────────────────
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertDeleted(deleted: DeletedMessageEntity)
+
+    @Query("SELECT EXISTS(SELECT 1 FROM deleted_messages WHERE message_id = :messageId)")
+    suspend fun isDeleted(messageId: String): Boolean
 }
