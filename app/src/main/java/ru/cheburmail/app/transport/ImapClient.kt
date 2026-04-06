@@ -348,6 +348,43 @@ open class ImapClient {
         return match?.groupValues?.get(1)?.trim() ?: trimmed
     }
 
+    /**
+     * Delete messages from CheburMail IMAP folder whose subject contains [msgUuid].
+     * Also checks INBOX. Expunges after marking DELETED.
+     */
+    fun deleteFromImap(config: EmailConfig, msgUuid: String) {
+        var store: Store? = null
+        try {
+            store = connectStore(config)
+            for (folderName in listOf(CHEBURMAIL_FOLDER, "INBOX")) {
+                val folder = store.getFolder(folderName)
+                if (!folder.exists()) continue
+                folder.open(Folder.READ_WRITE)
+                try {
+                    val total = folder.messageCount
+                    val scanCount = minOf(MAX_FETCH_COUNT, total)
+                    if (scanCount == 0) continue
+                    val msgs = folder.getMessages(total - scanCount + 1, total)
+                    for (msg in msgs) {
+                        val subj = msg.subject ?: continue
+                        if (subj.contains(msgUuid)) {
+                            msg.setFlag(Flags.Flag.DELETED, true)
+                            Log.d(TAG, "Marked DELETED in $folderName: $subj")
+                        }
+                    }
+                    folder.close(true) // expunge
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error deleting from $folderName: ${e.message}")
+                    if (folder.isOpen) folder.close(false)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "IMAP delete failed for $msgUuid: ${e.message}")
+        } finally {
+            store?.close()
+        }
+    }
+
     companion object {
         private const val TAG = "ImapClient"
         const val CHEBURMAIL_FOLDER = "CheburMail"

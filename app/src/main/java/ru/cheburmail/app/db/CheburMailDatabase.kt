@@ -15,6 +15,7 @@ import ru.cheburmail.app.db.entity.ChatEntity
 import ru.cheburmail.app.db.entity.ChatMemberEntity
 import ru.cheburmail.app.db.entity.ContactEntity
 import ru.cheburmail.app.db.entity.MessageEntity
+import ru.cheburmail.app.db.entity.DeletedMessageEntity
 import ru.cheburmail.app.db.entity.SendQueueEntity
 
 @Database(
@@ -23,9 +24,10 @@ import ru.cheburmail.app.db.entity.SendQueueEntity
         ChatEntity::class,
         ChatMemberEntity::class,
         MessageEntity::class,
-        SendQueueEntity::class
+        SendQueueEntity::class,
+        DeletedMessageEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -38,6 +40,17 @@ abstract class CheburMailDatabase : RoomDatabase() {
 
     companion object {
         private const val DB_NAME = "cheburmail.db"
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS deleted_messages (
+                        message_id TEXT NOT NULL PRIMARY KEY,
+                        deleted_at INTEGER NOT NULL
+                    )
+                """)
+            }
+        }
 
         val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -78,7 +91,7 @@ abstract class CheburMailDatabase : RoomDatabase() {
                     CheburMailDatabase::class.java,
                     DB_NAME
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build().also { INSTANCE = it }
             }
     }

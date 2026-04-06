@@ -272,12 +272,20 @@ class ChatViewModel(
     // ── Delete messages ───────────────────────────────────────────────
 
     fun deleteMessageLocally(messageId: String) {
-        viewModelScope.launch { messageDao.deleteById(messageId) }
+        viewModelScope.launch {
+            messageDao.deleteById(messageId)
+            messageDao.insertDeleted(
+                ru.cheburmail.app.db.entity.DeletedMessageEntity(messageId)
+            )
+        }
     }
 
     fun deleteMessageForEveryone(messageId: String) {
         viewModelScope.launch {
             messageDao.deleteById(messageId)
+            messageDao.insertDeleted(
+                ru.cheburmail.app.db.entity.DeletedMessageEntity(messageId)
+            )
             // Отправляем control message собеседнику
             val email = recipientEmail ?: return@launch
             withContext(Dispatchers.IO) {
@@ -304,6 +312,14 @@ class ChatViewModel(
                     )
                     ru.cheburmail.app.transport.SmtpClient().send(config, emailMessage)
                     Log.d(TAG, "Delete control message sent for $messageId")
+
+                    // Удаляем оригинальное сообщение из IMAP (у отправителя)
+                    try {
+                        ru.cheburmail.app.transport.ImapClient().deleteFromImap(config, messageId)
+                        Log.d(TAG, "Deleted from IMAP: $messageId")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to delete from IMAP: ${e.message}")
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to send delete control: ${e.message}")
                 }
@@ -389,8 +405,14 @@ class ChatViewModel(
                     Log.d(TAG, "Encrypting for ${contact.email}, " +
                         "recipientPubKey=${java.util.Base64.getEncoder().encodeToString(contact.publicKey).take(16)}..., " +
                         "myPubKey=${java.util.Base64.getEncoder().encodeToString(keyPair.publicKey).take(16)}...")
+                    // Encode reply metadata into payload
+                    val payload = if (reply != null && replyText != null) {
+                        "REPLY:${reply.id}\n${replyText.take(100)}\n$text"
+                    } else {
+                        text
+                    }
                     val envelope = encryptor.encrypt(
-                        message = text.toByteArray(Charsets.UTF_8),
+                        message = payload.toByteArray(Charsets.UTF_8),
                         recipientPublicKey = contact.publicKey,
                         senderPrivateKey = keyPair.getPrivateKey()
                     )
