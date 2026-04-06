@@ -72,7 +72,7 @@ class SyncManager(private val context: Context) {
     /**
      * Запланировать периодическую синхронизацию через WorkManager.
      */
-    fun schedulePeriodicSync() {
+    suspend fun schedulePeriodicSync() {
         PeriodicSyncWorker.schedule(context)
     }
 

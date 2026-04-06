@@ -79,7 +79,9 @@ fun AppNavigation(
         accountRepository = accountRepository
     )
     val chatListViewModel = ChatListViewModel(database.chatDao(), database.messageDao(), navController.context.applicationContext)
-    val settingsViewModel = SettingsViewModel(accountRepository)
+    val appContext = navController.context.applicationContext
+    val appSettings = ru.cheburmail.app.storage.AppSettings.getInstance(appContext)
+    val settingsViewModel = SettingsViewModel(accountRepository, appSettings, appContext)
 
     NavHost(
         navController = navController,

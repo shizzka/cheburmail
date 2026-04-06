@@ -4,15 +4,19 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import ru.cheburmail.app.crypto.CryptoProvider
 import ru.cheburmail.app.crypto.KeyPairGenerator
 import ru.cheburmail.app.db.CheburMailDatabase
 import ru.cheburmail.app.repository.AccountRepository
+import ru.cheburmail.app.storage.AppSettings
 import ru.cheburmail.app.storage.SecureKeyStorage
 import ru.cheburmail.app.ui.navigation.AppNavigation
 import ru.cheburmail.app.ui.theme.CheburMailTheme
@@ -34,6 +38,21 @@ class MainActivity : ComponentActivity() {
             applicationContext,
             KeyPairGenerator(CryptoProvider.lazySodium)
         )
+
+        // Наблюдаем за настройкой запрета скриншотов
+        val appSettings = AppSettings.getInstance(applicationContext)
+        lifecycleScope.launch {
+            appSettings.screenshotsBlocked.collect { blocked ->
+                if (blocked) {
+                    window.setFlags(
+                        WindowManager.LayoutParams.FLAG_SECURE,
+                        WindowManager.LayoutParams.FLAG_SECURE
+                    )
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
+        }
 
         setContent {
             CheburMailTheme {

@@ -45,16 +45,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import ru.cheburmail.app.messaging.DisappearingMessageManager
+import ru.cheburmail.app.storage.AppSettings
 import ru.cheburmail.app.transport.EmailConfig
 
 /**
  * Экран настроек приложения.
- *
- * Разделы:
- * - Аккаунты: список, добавление, удаление
- * - Уведомления: вкл/выкл, звук
- * - Исчезающие сообщения: таймер по умолчанию
- * - О приложении: версия, криптография
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,6 +62,9 @@ fun SettingsScreen(
     val notificationsEnabled by viewModel.notificationsEnabled.collectAsState()
     val soundEnabled by viewModel.soundEnabled.collectAsState()
     val defaultTimer by viewModel.defaultDisappearTimer.collectAsState()
+    val chatSyncSec by viewModel.chatSyncIntervalSec.collectAsState()
+    val bgSyncMin by viewModel.backgroundSyncIntervalMin.collectAsState()
+    val screenshotsBlocked by viewModel.screenshotsBlocked.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val clearingImap by viewModel.clearingImap.collectAsState()
     val imapClearResult by viewModel.imapClearResult.collectAsState()
@@ -187,6 +185,51 @@ fun SettingsScreen(
                 ) {
                     Text("Добавить аккаунт")
                 }
+            }
+
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
+
+            // --- Секция: Синхронизация ---
+            item {
+                SectionHeader("Синхронизация")
+            }
+
+            item {
+                DropdownRow(
+                    title = "В открытом чате",
+                    subtitle = "Как часто проверять новые сообщения",
+                    currentValue = chatSyncSec,
+                    options = AppSettings.CHAT_SYNC_OPTIONS,
+                    formatOption = { "${it} сек" },
+                    onSelected = { viewModel.setChatSyncIntervalSec(it) }
+                )
+            }
+
+            item {
+                DropdownRow(
+                    title = "Фоновая синхронизация",
+                    subtitle = "Интервал при свёрнутом приложении",
+                    currentValue = bgSyncMin,
+                    options = AppSettings.BACKGROUND_SYNC_OPTIONS,
+                    formatOption = { "${it} мин" },
+                    onSelected = { viewModel.setBackgroundSyncIntervalMin(it) }
+                )
+            }
+
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
+
+            // --- Секция: Приватность ---
+            item {
+                SectionHeader("Приватность")
+            }
+
+            item {
+                SwitchRow(
+                    title = "Запрет скриншотов",
+                    subtitle = "Блокировать снимки экрана и запись",
+                    checked = screenshotsBlocked,
+                    onCheckedChange = { viewModel.setScreenshotsBlocked(it) }
+                )
             }
 
             item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
@@ -394,6 +437,59 @@ private fun SwitchRow(
             onCheckedChange = onCheckedChange,
             enabled = enabled
         )
+    }
+}
+
+@Composable
+private fun <T> DropdownRow(
+    title: String,
+    subtitle: String,
+    currentValue: T,
+    options: List<T>,
+    formatOption: (T) -> String,
+    onSelected: (T) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = true }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Text(
+            text = formatOption(currentValue),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(formatOption(option)) },
+                    onClick = {
+                        onSelected(option)
+                        expanded = false
+                    }
+                )
+            }
+        }
     }
 }
 

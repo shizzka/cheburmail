@@ -16,6 +16,19 @@ local.properties
 /app/schemas
 *.hprof
 
+# Keystore (secrets)
+*.jks
+*.keystore
+
+# Kotlin cache
+.kotlin/
+
+# Notebooks
+*.ipynb
+
+# Bot runtime data
+bot/subscribers.json
+
 # GSD autopilot (transient files)
 .planning/autopilot.sh
 .planning/autopilot.lock
