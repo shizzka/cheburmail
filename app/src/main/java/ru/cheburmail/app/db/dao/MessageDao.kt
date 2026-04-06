@@ -65,6 +65,12 @@ interface MessageDao {
     suspend fun deleteByChatId(chatId: String)
 
     /**
+     * Удалить одно сообщение по ID.
+     */
+    @Query("DELETE FROM messages WHERE id = :messageId")
+    suspend fun deleteById(messageId: String)
+
+    /**
      * Обновить медиа-данные сообщения (URI файла, миниатюра, статус загрузки).
      */
     @Query("""

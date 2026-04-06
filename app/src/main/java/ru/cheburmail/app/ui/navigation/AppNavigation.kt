@@ -64,6 +64,7 @@ fun AppNavigation(
     accountRepository: AccountRepository,
     database: CheburMailDatabase,
     keyStorage: SecureKeyStorage,
+    initialChatId: String? = null,
     navController: NavHostController = rememberNavController()
 ) {
     val hasAccounts by accountRepository.observeHasAccounts()
@@ -82,6 +83,15 @@ fun AppNavigation(
     val appContext = navController.context.applicationContext
     val appSettings = ru.cheburmail.app.storage.AppSettings.getInstance(appContext)
     val settingsViewModel = SettingsViewModel(accountRepository, appSettings, appContext)
+
+    // Deep link из уведомления — навигация в конкретный чат
+    LaunchedEffect(initialChatId) {
+        if (initialChatId != null && hasAccounts) {
+            navController.navigate(Routes.chat(initialChatId)) {
+                popUpTo(Routes.CHAT_LIST)
+            }
+        }
+    }
 
     NavHost(
         navController = navController,

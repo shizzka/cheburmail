@@ -140,6 +140,16 @@ class ReceiveWorker(
                     recipientPrivateKey
                 )
 
+                val textStr = String(plaintext, Charsets.UTF_8)
+
+                // Handle DELETE control messages
+                if (textStr.startsWith("DELETE:")) {
+                    val targetMsgId = textStr.removePrefix("DELETE:")
+                    messageDao.deleteById(targetMsgId)
+                    Log.i(TAG, "Deleted message $targetMsgId by remote request from ${msg.fromEmail}")
+                    continue
+                }
+
                 // Ensure chat exists before saving message (FK constraint)
                 val now = System.currentTimeMillis()
                 if (chatDao != null) {
@@ -162,7 +172,7 @@ class ReceiveWorker(
                     chatId = msg.chatId,
                     senderContactId = contact.id,
                     isOutgoing = false,
-                    plaintext = String(plaintext, Charsets.UTF_8),
+                    plaintext = textStr,
                     status = MessageStatus.RECEIVED,
                     timestamp = now
                 )
@@ -174,7 +184,7 @@ class ReceiveWorker(
                 // Show notification
                 notificationHelper?.showMessageNotification(
                     senderName = contact.displayName,
-                    preview = String(plaintext, Charsets.UTF_8).take(100),
+                    preview = textStr.take(100),
                     chatId = msg.chatId
                 )
 
