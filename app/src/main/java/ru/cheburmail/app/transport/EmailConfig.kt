@@ -9,4 +9,6 @@ data class EmailConfig(
     val smtpPort: Int get() = provider.smtpPort
     val imapHost: String get() = provider.imapHost
     val imapPort: Int get() = provider.imapPort
+
+    override fun toString(): String = "EmailConfig(email=$email, provider=$provider)"
 }

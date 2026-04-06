@@ -51,7 +51,7 @@ class SyncManager(private val context: Context) {
      * @param config конфигурация email-аккаунта
      */
     fun startImapIdle(config: EmailConfig) {
-        val intent = ImapIdleService.createIntent(context, config)
+        val intent = ImapIdleService.createIntent(context)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent)
         } else {

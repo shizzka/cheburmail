@@ -80,6 +80,14 @@ class NotificationHelper(private val context: Context) {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+                    .setSmallIcon(android.R.drawable.ic_dialog_email)
+                    .setContentTitle("CheburMail")
+                    .setContentText("Новое сообщение")
+                    .build()
+            )
             .build()
 
         val notificationId = chatId?.hashCode() ?: System.currentTimeMillis().toInt()
