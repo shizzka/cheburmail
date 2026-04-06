@@ -1,5 +1,6 @@
 package ru.cheburmail.app.ui.settings
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -14,16 +15,20 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ru.cheburmail.app.messaging.DisappearingMessageManager
 import ru.cheburmail.app.repository.AccountRepository
+import ru.cheburmail.app.storage.AppSettings
 import ru.cheburmail.app.transport.EmailConfig
 import ru.cheburmail.app.transport.ImapClient
 
 /**
  * ViewModel экрана настроек.
  * Управляет списком аккаунтов, параметрами уведомлений,
- * таймером исчезающих сообщений и очисткой IMAP папки.
+ * таймером исчезающих сообщений, интервалами синхронизации,
+ * запретом скриншотов и очисткой IMAP папки.
  */
 class SettingsViewModel(
-    private val accountRepository: AccountRepository
+    private val accountRepository: AccountRepository,
+    private val appSettings: AppSettings,
+    private val appContext: android.content.Context
 ) : ViewModel() {
 
     /** Список сохранённых аккаунтов */
@@ -31,16 +36,28 @@ class SettingsViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** Уведомления включены */
-    private val _notificationsEnabled = MutableStateFlow(true)
-    val notificationsEnabled: StateFlow<Boolean> = _notificationsEnabled.asStateFlow()
+    val notificationsEnabled: StateFlow<Boolean> = appSettings.notificationsEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
     /** Звук уведомлений включён */
-    private val _soundEnabled = MutableStateFlow(true)
-    val soundEnabled: StateFlow<Boolean> = _soundEnabled.asStateFlow()
+    val soundEnabled: StateFlow<Boolean> = appSettings.soundEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
     /** Таймер исчезающих сообщений по умолчанию (null = выкл) */
-    private val _defaultDisappearTimer = MutableStateFlow<Long?>(null)
-    val defaultDisappearTimer: StateFlow<Long?> = _defaultDisappearTimer.asStateFlow()
+    val defaultDisappearTimer: StateFlow<Long?> = appSettings.disappearTimerMs
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** Интервал синхронизации в открытом чате (секунды) */
+    val chatSyncIntervalSec: StateFlow<Long> = appSettings.chatSyncIntervalSec
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings.DEFAULT_CHAT_SYNC_SEC)
+
+    /** Интервал фоновой синхронизации (минуты) */
+    val backgroundSyncIntervalMin: StateFlow<Long> = appSettings.backgroundSyncIntervalMin
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings.DEFAULT_BACKGROUND_SYNC_MIN)
+
+    /** Запрет скриншотов */
+    val screenshotsBlocked: StateFlow<Boolean> = appSettings.screenshotsBlocked
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     /** Сообщение об ошибке */
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -54,15 +71,31 @@ class SettingsViewModel(
     val imapClearResult: StateFlow<String?> = _imapClearResult.asStateFlow()
 
     fun setNotificationsEnabled(enabled: Boolean) {
-        _notificationsEnabled.value = enabled
+        viewModelScope.launch { appSettings.setNotificationsEnabled(enabled) }
     }
 
     fun setSoundEnabled(enabled: Boolean) {
-        _soundEnabled.value = enabled
+        viewModelScope.launch { appSettings.setSoundEnabled(enabled) }
     }
 
     fun setDefaultDisappearTimer(durationMs: Long?) {
-        _defaultDisappearTimer.value = durationMs
+        viewModelScope.launch { appSettings.setDisappearTimerMs(durationMs) }
+    }
+
+    fun setChatSyncIntervalSec(sec: Long) {
+        viewModelScope.launch { appSettings.setChatSyncIntervalSec(sec) }
+    }
+
+    fun setBackgroundSyncIntervalMin(min: Long) {
+        viewModelScope.launch {
+            appSettings.setBackgroundSyncIntervalMin(min)
+            // Перепланировать WorkManager с новым интервалом
+            ru.cheburmail.app.sync.PeriodicSyncWorker.schedule(appContext)
+        }
+    }
+
+    fun setScreenshotsBlocked(blocked: Boolean) {
+        viewModelScope.launch { appSettings.setScreenshotsBlocked(blocked) }
     }
 
     /**
@@ -80,7 +113,6 @@ class SettingsViewModel(
 
     /**
      * Очистить папку CheburMail на IMAP-сервере.
-     * Удаляет все письма из папки CheburMail.
      */
     fun clearImapFolder() {
         viewModelScope.launch {
@@ -113,6 +145,7 @@ class SettingsViewModel(
             put("mail.imap.host", config.imapHost)
             put("mail.imap.port", config.imapPort.toString())
             put("mail.imap.ssl.enable", "true")
+            put("mail.imap.ssl.checkserveridentity", "true")
             put("mail.imap.connectiontimeout", "15000")
             put("mail.imap.timeout", "15000")
         }
@@ -162,11 +195,13 @@ class SettingsViewModel(
     }
 
     class Factory(
-        private val accountRepository: AccountRepository
+        private val accountRepository: AccountRepository,
+        private val appSettings: AppSettings,
+        private val appContext: android.content.Context
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return SettingsViewModel(accountRepository) as T
+            return SettingsViewModel(accountRepository, appSettings, appContext) as T
         }
     }
 

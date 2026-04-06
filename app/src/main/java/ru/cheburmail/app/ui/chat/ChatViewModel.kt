@@ -7,13 +7,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import ru.cheburmail.app.storage.AppSettings
 import ru.cheburmail.app.crypto.CryptoProvider
 import ru.cheburmail.app.crypto.MessageEncryptor
 import ru.cheburmail.app.crypto.NonceGenerator
@@ -148,6 +152,9 @@ class ChatViewModel(
                 }
             }
         }
+
+        // Auto-poll: проверяем новые сообщения каждые 30 секунд пока чат открыт
+        startAutoSync()
     }
 
     fun updateInputText(text: String) {
@@ -161,52 +168,81 @@ class ChatViewModel(
         viewModelScope.launch {
             _isRefreshing.value = true
             try {
-                withContext(Dispatchers.IO) {
-                    val accountRepo = AccountRepository.create(appContext)
-                    val config = accountRepo.getActive() ?: return@withContext
-
-                    val ls = CryptoProvider.lazySodium
-                    val nonceGen = NonceGenerator(ls)
-                    val decryptor = MessageDecryptor(ls)
-                    val transportService = TransportService(
-                        smtpClient = SmtpClient(),
-                        imapClient = ImapClient(),
-                        emailFormatter = EmailFormatter(),
-                        emailParser = EmailParser(),
-                        encryptor = ru.cheburmail.app.crypto.MessageEncryptor(ls, nonceGen),
-                        decryptor = decryptor
-                    )
-
-                    val keyPair = keyStorage.getOrCreateKeyPair()
-                    val db = ru.cheburmail.app.db.CheburMailDatabase.getInstance(appContext)
-                    val keyExchangeManager = ru.cheburmail.app.messaging.KeyExchangeManager(
-                        smtpClient = SmtpClient(),
-                        contactDao = db.contactDao(),
-                        keyStorage = keyStorage
-                    )
-                    val mediaDecryptor = ru.cheburmail.app.media.MediaDecryptor(decryptor)
-                    val receiveWorker = ReceiveWorker(
-                        transportService = transportService,
-                        decryptor = decryptor,
-                        retryStrategy = RetryStrategy(),
-                        messageDao = db.messageDao(),
-                        contactDao = db.contactDao(),
-                        chatDao = db.chatDao(),
-                        notificationHelper = NotificationHelper(appContext),
-                        recipientPrivateKey = keyPair.getPrivateKey(),
-                        keyExchangeManager = keyExchangeManager,
-                        emailConfig = config,
-                        mediaDecryptor = mediaDecryptor,
-                        mediaFileManager = mediaFileManager
-                    )
-
-                    val received = receiveWorker.pollAndProcess(config)
-                    Log.d(TAG, "Pull-to-refresh: получено $received новых сообщений")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Ошибка refresh: ${e.message}")
+                doSync("Pull-to-refresh")
             } finally {
                 _isRefreshing.value = false
+            }
+        }
+    }
+
+    /**
+     * Auto-poll: периодическая проверка новых сообщений пока чат открыт.
+     * Интервал берётся из настроек (AppSettings.chatSyncIntervalSec).
+     */
+    private fun startAutoSync() {
+        viewModelScope.launch {
+            val settings = AppSettings.getInstance(appContext)
+            delay(AUTO_SYNC_DELAY_MS) // начальная задержка — не дублировать IDLE sync при входе
+            while (isActive) {
+                if (!_isRefreshing.value) {
+                    try {
+                        doSync("Auto-sync")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Auto-sync error: ${e.message}")
+                    }
+                }
+                val intervalSec = settings.chatSyncIntervalSec.first()
+                delay(intervalSec * 1000L)
+            }
+        }
+    }
+
+    /**
+     * Общая логика синхронизации: IMAP poll → decrypt → save.
+     */
+    private suspend fun doSync(source: String) {
+        withContext(Dispatchers.IO) {
+            val accountRepo = AccountRepository.create(appContext)
+            val config = accountRepo.getActive() ?: return@withContext
+
+            val ls = CryptoProvider.lazySodium
+            val nonceGen = NonceGenerator(ls)
+            val decryptor = MessageDecryptor(ls)
+            val transportService = TransportService(
+                smtpClient = SmtpClient(),
+                imapClient = ImapClient(),
+                emailFormatter = EmailFormatter(),
+                emailParser = EmailParser(),
+                encryptor = ru.cheburmail.app.crypto.MessageEncryptor(ls, nonceGen),
+                decryptor = decryptor
+            )
+
+            val keyPair = keyStorage.getOrCreateKeyPair()
+            val db = ru.cheburmail.app.db.CheburMailDatabase.getInstance(appContext)
+            val keyExchangeManager = ru.cheburmail.app.messaging.KeyExchangeManager(
+                smtpClient = SmtpClient(),
+                contactDao = db.contactDao(),
+                keyStorage = keyStorage
+            )
+            val mediaDecryptor = ru.cheburmail.app.media.MediaDecryptor(decryptor)
+            val receiveWorker = ReceiveWorker(
+                transportService = transportService,
+                decryptor = decryptor,
+                retryStrategy = RetryStrategy(),
+                messageDao = db.messageDao(),
+                contactDao = db.contactDao(),
+                chatDao = db.chatDao(),
+                notificationHelper = NotificationHelper(appContext),
+                recipientPrivateKey = keyPair.getPrivateKey(),
+                keyExchangeManager = keyExchangeManager,
+                emailConfig = config,
+                mediaDecryptor = mediaDecryptor,
+                mediaFileManager = mediaFileManager
+            )
+
+            val received = receiveWorker.pollAndProcess(config)
+            if (received > 0) {
+                Log.i(TAG, "$source: получено $received новых сообщений")
             }
         }
     }
@@ -657,5 +693,6 @@ class ChatViewModel(
 
     companion object {
         private const val TAG = "ChatViewModel"
+        private const val AUTO_SYNC_DELAY_MS = 5_000L // 5 секунд начальная задержка
     }
 }

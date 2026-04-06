@@ -26,6 +26,8 @@ import ru.cheburmail.app.transport.SendWorker
 import ru.cheburmail.app.transport.SmtpClient
 import ru.cheburmail.app.transport.TransportService
 import ru.cheburmail.app.messaging.KeyExchangeManager
+import ru.cheburmail.app.storage.AppSettings
+import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
 /**
@@ -127,26 +129,30 @@ class PeriodicSyncWorker(
 
         /**
          * Запланировать периодическую синхронизацию.
-         * Минимальный интервал WorkManager — 15 минут.
+         * Интервал берётся из AppSettings (минимум WorkManager — 15 минут).
          */
-        fun schedule(context: Context) {
+        suspend fun schedule(context: Context) {
+            val settings = AppSettings.getInstance(context)
+            val intervalMin = settings.backgroundSyncIntervalMin.first()
+                .coerceAtLeast(15L) // WorkManager minimum
+
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
 
             val request = PeriodicWorkRequestBuilder<PeriodicSyncWorker>(
-                15, TimeUnit.MINUTES
+                intervalMin, TimeUnit.MINUTES
             )
                 .setConstraints(constraints)
                 .build()
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
+                ExistingPeriodicWorkPolicy.UPDATE,
                 request
             )
 
-            Log.i(TAG, "Периодическая синхронизация запланирована (15 мин)")
+            Log.i(TAG, "Периодическая синхронизация запланирована ($intervalMin мин)")
         }
 
         /**
