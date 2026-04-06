@@ -112,6 +112,10 @@ class ChatViewModel(
     private val _sendingMediaLabel = MutableStateFlow("Отправка...")
     val sendingMediaLabel: StateFlow<String> = _sendingMediaLabel.asStateFlow()
 
+    /** Сообщение, на которое отвечаем (reply/quote). */
+    private val _replyTo = MutableStateFlow<MessageEntity?>(null)
+    val replyTo: StateFlow<MessageEntity?> = _replyTo.asStateFlow()
+
     init {
         viewModelScope.launch {
             val chat = chatDao.getById(chatId)
@@ -247,6 +251,66 @@ class ChatViewModel(
         }
     }
 
+    // ── Rename chat ─────────────────────────────────────────────────────
+
+    fun renameChat(newTitle: String) {
+        val title = newTitle.trim()
+        if (title.isEmpty()) return
+        _chatTitle.value = title
+        viewModelScope.launch {
+            val chat = chatDao.getById(chatId) ?: return@launch
+            chatDao.update(chat.copy(title = title, updatedAt = System.currentTimeMillis()))
+        }
+    }
+
+    // ── Reply ─────────────────────────────────────────────────────────
+
+    fun setReplyTo(message: MessageEntity?) {
+        _replyTo.value = message
+    }
+
+    // ── Delete messages ───────────────────────────────────────────────
+
+    fun deleteMessageLocally(messageId: String) {
+        viewModelScope.launch { messageDao.deleteById(messageId) }
+    }
+
+    fun deleteMessageForEveryone(messageId: String) {
+        viewModelScope.launch {
+            messageDao.deleteById(messageId)
+            // Отправляем control message собеседнику
+            val email = recipientEmail ?: return@launch
+            withContext(Dispatchers.IO) {
+                try {
+                    val contact = contactDao.getByEmail(email) ?: return@withContext
+                    val keyPair = keyStorage.getOrCreateKeyPair()
+                    val ls = CryptoProvider.lazySodium
+                    val encryptor = MessageEncryptor(ls, NonceGenerator(ls))
+                    val deletePayload = "DELETE:$messageId".toByteArray(Charsets.UTF_8)
+                    val envelope = encryptor.encrypt(
+                        message = deletePayload,
+                        recipientPublicKey = contact.publicKey,
+                        senderPrivateKey = keyPair.getPrivateKey()
+                    )
+                    val accountRepo = AccountRepository.create(appContext)
+                    val config = accountRepo.getActive() ?: return@withContext
+                    val formatter = ru.cheburmail.app.transport.EmailFormatter()
+                    val emailMessage = formatter.format(
+                        envelope = envelope,
+                        chatId = chatId,
+                        msgUuid = "del-${UUID.randomUUID()}",
+                        fromEmail = config.email,
+                        toEmail = email
+                    )
+                    ru.cheburmail.app.transport.SmtpClient().send(config, emailMessage)
+                    Log.d(TAG, "Delete control message sent for $messageId")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to send delete control: ${e.message}")
+                }
+            }
+        }
+    }
+
     /**
      * Отправить текстовое сообщение.
      * Шифрует, кладёт в send_queue, триггерит OutboxDrainWorker.
@@ -256,6 +320,8 @@ class ChatViewModel(
         if (text.isEmpty()) return
 
         _inputText.value = ""
+        val reply = _replyTo.value
+        _replyTo.value = null
 
         viewModelScope.launch {
             try {
@@ -278,13 +344,25 @@ class ChatViewModel(
                 val now = System.currentTimeMillis()
 
                 // Сохраняем сообщение в БД
+                val replyText = reply?.let {
+                    it.plaintext.ifEmpty {
+                        when (it.mediaType) {
+                            MediaType.IMAGE -> "[Фото]"
+                            MediaType.FILE -> "[Файл] ${it.fileName ?: ""}"
+                            MediaType.VOICE -> "[Голосовое]"
+                            else -> ""
+                        }
+                    }
+                }
                 val message = MessageEntity(
                     id = msgId,
                     chatId = chatId,
                     isOutgoing = true,
                     plaintext = text,
                     status = MessageStatus.SENDING,
-                    timestamp = now
+                    timestamp = now,
+                    replyToId = reply?.id,
+                    replyToText = replyText?.take(100)
                 )
                 messageDao.insert(message)
 

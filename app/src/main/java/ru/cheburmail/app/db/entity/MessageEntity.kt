@@ -74,5 +74,11 @@ data class MessageEntity(
     val waveformData: String? = null,
 
     @ColumnInfo(name = "media_download_status")
-    val mediaDownloadStatus: MediaDownloadStatus = MediaDownloadStatus.NONE
+    val mediaDownloadStatus: MediaDownloadStatus = MediaDownloadStatus.NONE,
+
+    @ColumnInfo(name = "reply_to_id")
+    val replyToId: String? = null,
+
+    @ColumnInfo(name = "reply_to_text")
+    val replyToText: String? = null
 )
