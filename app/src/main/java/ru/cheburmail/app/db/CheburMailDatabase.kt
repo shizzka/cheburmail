@@ -25,7 +25,7 @@ import ru.cheburmail.app.db.entity.SendQueueEntity
         MessageEntity::class,
         SendQueueEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -38,6 +38,13 @@ abstract class CheburMailDatabase : RoomDatabase() {
 
     companion object {
         private const val DB_NAME = "cheburmail.db"
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN reply_to_id TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE messages ADD COLUMN reply_to_text TEXT DEFAULT NULL")
+            }
+        }
 
         val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -71,7 +78,7 @@ abstract class CheburMailDatabase : RoomDatabase() {
                     CheburMailDatabase::class.java,
                     DB_NAME
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build().also { INSTANCE = it }
             }
     }

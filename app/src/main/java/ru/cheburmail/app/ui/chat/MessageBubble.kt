@@ -1,10 +1,13 @@
 package ru.cheburmail.app.ui.chat
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -87,6 +90,30 @@ fun MessageBubble(
             Column(
                 modifier = Modifier.padding(12.dp)
             ) {
+                // Reply quote
+                if (!message.replyToText.isNullOrEmpty()) {
+                    Row {
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(32.dp)
+                                .background(
+                                    MaterialTheme.colorScheme.primary,
+                                    RoundedCornerShape(2.dp)
+                                )
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = message.replyToText.take(80),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 2,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
                 when (message.mediaType) {
                     MediaType.FILE -> {
                         FileMessageBubble(

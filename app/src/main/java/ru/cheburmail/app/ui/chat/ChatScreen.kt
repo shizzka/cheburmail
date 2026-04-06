@@ -4,6 +4,8 @@ import android.Manifest
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,28 +15,36 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -49,14 +59,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import ru.cheburmail.app.db.entity.MessageEntity
 
 /**
  * Экран переписки.
  * LazyColumn с историей сообщений (автопрокрутка вниз), поле ввода и кнопка отправки.
  * Pull-to-refresh запускает синхронизацию.
- * Поддерживает прикрепление файлов и голосовые сообщения.
+ * Поддерживает прикрепление файлов, голосовые сообщения, ответ/цитату, удаление.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
@@ -69,31 +80,37 @@ fun ChatScreen(
     val isRecordingVoice by viewModel.isRecordingVoice.collectAsState()
     val isSendingMedia by viewModel.isSendingMedia.collectAsState()
     val sendingMediaLabel by viewModel.sendingMediaLabel.collectAsState()
+    val replyTo by viewModel.replyTo.collectAsState()
     val listState = rememberLazyListState()
 
     // Full-screen image viewer state
     var fullScreenImagePath by remember { mutableStateOf<String?>(null) }
+
+    // Rename dialog
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var renameText by remember { mutableStateOf("") }
+
+    // Message context menu
+    var contextMenuMessage by remember { mutableStateOf<MessageEntity?>(null) }
 
     // Stop voice player when leaving the screen
     DisposableEffect(Unit) {
         onDispose { viewModel.voicePlayer.stop() }
     }
 
-    // File picker launcher
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        uri?.let { viewModel.onFilePicked(it) }
-    }
-
-    // Gallery image picker launcher
+    // Launchers
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         uri?.let { viewModel.onImagePicked(it) }
     }
 
-    // Camera launcher — captures photo to prepared URI
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.onFilePicked(it) }
+    }
+
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
@@ -104,7 +121,6 @@ fun ChatScreen(
         pendingCameraUri = null
     }
 
-    // RECORD_AUDIO permission launcher
     val audioPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -118,6 +134,75 @@ fun ChatScreen(
         }
     }
 
+    // Rename dialog
+    if (showRenameDialog) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Переименовать чат") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    placeholder = { Text("Название чата") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.renameChat(renameText)
+                    showRenameDialog = false
+                }) { Text("Сохранить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) { Text("Отмена") }
+            }
+        )
+    }
+
+    // Message context menu dialog
+    contextMenuMessage?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { contextMenuMessage = null },
+            title = { Text("Сообщение") },
+            text = {
+                Column {
+                    TextButton(
+                        onClick = {
+                            viewModel.setReplyTo(msg)
+                            contextMenuMessage = null
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Ответить")
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                    TextButton(
+                        onClick = {
+                            viewModel.deleteMessageLocally(msg.id)
+                            contextMenuMessage = null
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Удалить у себя", color = MaterialTheme.colorScheme.error) }
+                    if (msg.isOutgoing) {
+                        TextButton(
+                            onClick = {
+                                viewModel.deleteMessageForEveryone(msg.id)
+                                contextMenuMessage = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Удалить у всех", color = MaterialTheme.colorScheme.error) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { contextMenuMessage = null }) { Text("Отмена") }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -127,6 +212,17 @@ fun ChatScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Назад"
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        renameText = chatTitle ?: ""
+                        showRenameDialog = true
+                    }) {
+                        Icon(
+                            imageVector = Icons.Filled.Edit,
+                            contentDescription = "Переименовать"
                         )
                     }
                 }
@@ -154,13 +250,20 @@ fun ChatScreen(
                         .padding(horizontal = 8.dp)
                 ) {
                     items(messages, key = { it.id }) { message ->
-                        MessageBubble(
-                            message = message,
-                            modifier = Modifier.padding(vertical = 4.dp),
-                            onImageClick = { path -> fullScreenImagePath = path },
-                            onSaveFile = viewModel::saveFileToDownloads,
-                            voicePlayer = viewModel.voicePlayer
-                        )
+                        Box(
+                            modifier = Modifier.combinedClickable(
+                                onClick = {},
+                                onLongClick = { contextMenuMessage = message }
+                            )
+                        ) {
+                            MessageBubble(
+                                message = message,
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                onImageClick = { path -> fullScreenImagePath = path },
+                                onSaveFile = viewModel::saveFileToDownloads,
+                                voicePlayer = viewModel.voicePlayer
+                            )
+                        }
                     }
 
                     // Отступ снизу
@@ -175,6 +278,14 @@ fun ChatScreen(
                 visible = isSendingMedia,
                 label = sendingMediaLabel
             )
+
+            // Reply preview
+            replyTo?.let { reply ->
+                ReplyPreview(
+                    message = reply,
+                    onCancel = { viewModel.setReplyTo(null) }
+                )
+            }
 
             // Поле ввода
             MessageInput(
@@ -213,6 +324,57 @@ fun ChatScreen(
                     .fillMaxSize()
                     .zIndex(10f)
             )
+        }
+    }
+}
+
+@Composable
+private fun ReplyPreview(
+    message: MessageEntity,
+    onCancel: () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.Reply,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (message.isOutgoing) "Вы" else "Собеседник",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                val preview = message.plaintext.ifEmpty {
+                    when (message.mediaType) {
+                        ru.cheburmail.app.db.MediaType.IMAGE -> "[Фото]"
+                        ru.cheburmail.app.db.MediaType.FILE -> "[Файл] ${message.fileName ?: ""}"
+                        ru.cheburmail.app.db.MediaType.VOICE -> "[Голосовое]"
+                        else -> ""
+                    }
+                }
+                Text(
+                    text = preview.take(60),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1
+                )
+            }
+            IconButton(onClick = onCancel, modifier = Modifier.size(24.dp)) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Отменить ответ",
+                    modifier = Modifier.size(16.dp)
+                )
+            }
         }
     }
 }
@@ -302,7 +464,7 @@ private fun MessageInput(
             Spacer(modifier = Modifier.width(8.dp))
 
             when {
-                // Text entered → Send button
+                // Text entered -> Send button
                 text.isNotBlank() -> {
                     IconButton(onClick = onSend) {
                         Icon(
@@ -312,7 +474,7 @@ private fun MessageInput(
                         )
                     }
                 }
-                // Recording → Stop button
+                // Recording -> Stop button
                 isRecordingVoice -> {
                     IconButton(onClick = onStopRecording) {
                         Icon(
@@ -322,7 +484,7 @@ private fun MessageInput(
                         )
                     }
                 }
-                // Idle → Mic button
+                // Idle -> Mic button
                 else -> {
                     IconButton(onClick = onStartRecording) {
                         Icon(

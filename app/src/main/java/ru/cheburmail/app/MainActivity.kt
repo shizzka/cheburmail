@@ -54,12 +54,18 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Deep link из уведомления
+        val initialChatId = intent?.getStringExtra(
+            ru.cheburmail.app.notification.NotificationHelper.EXTRA_CHAT_ID
+        )
+
         setContent {
             CheburMailTheme {
                 AppNavigation(
                     accountRepository = accountRepository,
                     database = database,
-                    keyStorage = keyStorage
+                    keyStorage = keyStorage,
+                    initialChatId = initialChatId
                 )
             }
         }
