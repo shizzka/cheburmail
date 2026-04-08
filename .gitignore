@@ -29,6 +29,12 @@ local.properties
 # Bot runtime data
 bot/subscribers.json
 
+# Claude Code (contains secrets)
+CLAUDE.md
+
+# Planning docs (internal)
+.planning/
+
 # GSD autopilot (transient files)
 .planning/autopilot.sh
 .planning/autopilot.lock
