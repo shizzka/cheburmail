@@ -23,9 +23,9 @@ android {
         }
         create("release") {
             storeFile = file("${rootProject.projectDir}/cheburmail-release.jks")
-            storePassword = "***REDACTED***"
+            storePassword = System.getenv("CHEBURMAIL_STORE_PASSWORD") ?: ""
             keyAlias = "cheburmail"
-            keyPassword = "***REDACTED***"
+            keyPassword = System.getenv("CHEBURMAIL_KEY_PASSWORD") ?: ""
             enableV1Signing = true
             enableV2Signing = true
             enableV3Signing = true
