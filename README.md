@@ -52,7 +52,6 @@ You (encrypt) → SMTP → Email Provider → IMAP → Recipient (decrypt)
 - **Group chats** with E2E encryption
 - **Delivery receipts** and read status
 - **Disappearing messages** with configurable timer
-- **Key backup** — export/import encryption keys
 - **Multi-account** — switch between email accounts
 
 ## Supported Providers
@@ -124,7 +123,7 @@ Email is federated, battle-tested infrastructure that already exists everywhere.
 No. Messages are encrypted on your device before they ever reach the email server. The provider sees the sender, recipient, and timestamps — but the message content is indistinguishable from random data.
 
 **What happens if I lose my device?**
-Currently, if you lose your device — you lose your messages and keys. Key backup/restore is in development. This is a trade-off: maximum security means no server-side recovery.
+You lose your messages and keys. This is by design — there is no backup, no server-side recovery, no way to extract your keys. If someone steals your phone, your contacts just need to re-exchange keys with your new device.
 
 **Can I use Gmail / Outlook?**
 Not yet. Currently supports Yandex Mail and Mail.ru. Adding more providers is straightforward — PRs welcome.
