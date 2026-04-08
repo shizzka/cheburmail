@@ -37,16 +37,23 @@ You (encrypt) → SMTP → Email Provider → IMAP → Recipient (decrypt)
 
 ## Features
 
-- **1-on-1 and group chats** with E2E encryption
+### Working
+- **1-on-1 chats** with E2E encryption
 - **Media messages**: images, files, voice recordings — all encrypted
+- **QR code key exchange** — scan in person, no server needed
+- **Key fingerprint verification** — 60-digit safety number
 - **Reply, quote, and delete** messages (deletes from IMAP too)
-- **Delivery receipts** and read status
-- **Disappearing messages** with configurable timer
-- **Key backup** — export/import your encryption keys
-- **Multi-account** — switch between email accounts
+- **Rename chats**
 - **Background sync** via WorkManager + IMAP IDLE
 - **Screenshot protection** in chat screens
 - **No tracking, no analytics, no ads**
+
+### In Development
+- **Group chats** with E2E encryption
+- **Delivery receipts** and read status
+- **Disappearing messages** with configurable timer
+- **Key backup** — export/import encryption keys
+- **Multi-account** — switch between email accounts
 
 ## Supported Providers
 
@@ -117,7 +124,7 @@ Email is federated, battle-tested infrastructure that already exists everywhere.
 No. Messages are encrypted on your device before they ever reach the email server. The provider sees the sender, recipient, and timestamps — but the message content is indistinguishable from random data.
 
 **What happens if I lose my device?**
-Use the key backup feature to export your encryption keys. Without your keys, your messages cannot be decrypted — even by you.
+Currently, if you lose your device — you lose your messages and keys. Key backup/restore is in development. This is a trade-off: maximum security means no server-side recovery.
 
 **Can I use Gmail / Outlook?**
 Not yet. Currently supports Yandex Mail and Mail.ru. Adding more providers is straightforward — PRs welcome.
