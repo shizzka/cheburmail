@@ -122,6 +122,10 @@ Use the key backup feature to export your encryption keys. Without your keys, yo
 **Can I use Gmail / Outlook?**
 Not yet. Currently supports Yandex Mail and Mail.ru. Adding more providers is straightforward — PRs welcome.
 
+## Download
+
+Get the latest APK from the distribution bot: [@my_fabrica_bot](https://t.me/my_fabrica_bot) (send `/cheburmail`)
+
 ## License
 
 MIT
