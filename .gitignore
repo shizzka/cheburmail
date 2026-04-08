@@ -26,8 +26,8 @@ local.properties
 # Notebooks
 *.ipynb
 
-# Bot runtime data
-bot/subscribers.json
+# Distribution bot (internal)
+bot/
 
 # Claude Code (contains secrets)
 CLAUDE.md
