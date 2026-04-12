@@ -127,10 +127,12 @@ fun ChatScreen(
         if (granted) viewModel.startVoiceRecording()
     }
 
-    // Автопрокрутка к последнему сообщению
+    // С reverseLayout=true последнее сообщение (index 0) уже внизу.
+    // Прокручиваем к 0 только при получении нового сообщения,
+    // если пользователь и так находится внизу.
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+        if (messages.isNotEmpty() && listState.firstVisibleItemIndex <= 1) {
+            listState.scrollToItem(0)
         }
     }
 
@@ -245,6 +247,7 @@ fun ChatScreen(
             ) {
                 LazyColumn(
                     state = listState,
+                    reverseLayout = true,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 8.dp)
@@ -266,7 +269,7 @@ fun ChatScreen(
                         }
                     }
 
-                    // Отступ снизу
+                    // Отступ сверху (в reverseLayout это визуально сверху списка)
                     item {
                         Spacer(modifier = Modifier.height(8.dp))
                     }
