@@ -10,8 +10,10 @@ import ru.cheburmail.app.transport.EmailConfig
 import ru.cheburmail.app.transport.EmailMessage
 import ru.cheburmail.app.transport.SmtpClient
 import ru.cheburmail.app.transport.TransportException
+import ru.cheburmail.app.notification.NotificationHelper
 import org.json.JSONObject
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Обмен публичными ключами через email.
@@ -25,12 +27,21 @@ import java.util.UUID
  * 1. User A вводит email User B → отправляет свой публичный ключ
  * 2. User B получает → создаёт контакт (UNVERIFIED) → автоматически отправляет свой ключ назад
  * 3. User A получает ответ → создаёт контакт (UNVERIFIED) → чат готов
+ *
+ * Безопасность:
+ * - VERIFIED контакты: смена ключа НЕ принимается автоматически (защита от MITM)
+ * - UNVERIFIED контакты: ключ обновляется, но показывается предупреждение
+ * - Дедупликация по UUID key exchange сообщений (защита от replay)
  */
 class KeyExchangeManager(
     private val smtpClient: SmtpClient,
     private val contactDao: ContactDao,
-    private val keyStorage: SecureKeyStorage
+    private val keyStorage: SecureKeyStorage,
+    private val notificationHelper: NotificationHelper? = null
 ) {
+
+    /** Кэш обработанных UUID key exchange для защиты от replay-атак */
+    private val processedKexUuids = ConcurrentHashMap<String, Long>()
 
     /**
      * Отправить свой публичный ключ на указанный email.
@@ -64,14 +75,32 @@ class KeyExchangeManager(
      * Обработать входящее key exchange сообщение.
      * Создаёт контакт и отправляет свой ключ назад (если контакта ещё нет).
      *
-     * @return true если контакт создан, false если уже существовал
+     * Безопасность:
+     * - Для VERIFIED контактов ключ НЕ обновляется автоматически. Пользователь должен
+     *   вручную нажать «Обновить ключ» и заново верифицировать контакт.
+     * - Для UNVERIFIED контактов ключ обновляется, но показывается уведомление.
+     * - UUID дедупликация предотвращает повторную обработку.
+     *
+     * @return true если контакт создан, false если уже существовал или ключ отклонён
      */
     suspend fun handleKeyExchange(
         body: ByteArray,
         fromEmail: String,
-        config: EmailConfig?
+        config: EmailConfig?,
+        kexUuid: String? = null
     ): Boolean {
         try {
+            // Дедупликация по UUID — защита от replay-атак
+            if (kexUuid != null) {
+                val now = System.currentTimeMillis()
+                if (processedKexUuids.putIfAbsent(kexUuid, now) != null) {
+                    Log.d(TAG, "Key exchange $kexUuid уже обработан, пропускаем")
+                    return false
+                }
+                // Чистим старые записи (>24ч) чтобы не накапливались
+                processedKexUuids.entries.removeAll { now - it.value > KEX_DEDUP_TTL_MS }
+            }
+
             val jsonStr = String(body, Charsets.UTF_8)
             val json = JSONObject(jsonStr)
 
@@ -95,28 +124,39 @@ class KeyExchangeManager(
             // Проверяем, не добавлен ли уже
             val existing = contactDao.getByEmail(senderEmail)
             if (existing != null) {
-                // Обновляем публичный ключ если он изменился (переустановка, регенерация)
-                if (!existing.publicKey.contentEquals(publicKey)) {
-                    val updated = existing.copy(
-                        publicKey = publicKey,
-                        fingerprint = fingerprint,
-                        trustStatus = TrustStatus.UNVERIFIED,
-                        updatedAt = System.currentTimeMillis()
-                    )
-                    contactDao.update(updated)
-                    Log.i(TAG, "Публичный ключ $senderEmail обновлён (сброшен в UNVERIFIED)")
-
-                    // Отправляем свой ключ назад — собеседник переустановил и ему нужен наш ключ
-                    if (config != null) {
-                        try {
-                            sendKeyExchange(config, senderEmail)
-                            Log.i(TAG, "Ответный key exchange отправлен (переустановка): -> $senderEmail")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Не удалось отправить ответный key exchange: ${e.message}")
-                        }
-                    }
-                } else {
+                // Ключ не изменился — ничего не делаем
+                if (existing.publicKey.contentEquals(publicKey)) {
                     Log.d(TAG, "Контакт $senderEmail уже существует, ключ не изменился")
+                    return false
+                }
+
+                // Ключ изменился! Поведение зависит от статуса верификации
+                if (existing.trustStatus == TrustStatus.VERIFIED) {
+                    // VERIFIED контакт: НЕ обновляем ключ автоматически (защита от MITM)
+                    Log.w(TAG, "ОТКЛОНЕНО: смена ключа VERIFIED контакта $senderEmail. " +
+                        "Требуется ручное обновление.")
+                    notificationHelper?.showKeyChangeWarning(senderEmail, wasVerified = true)
+                    return false
+                }
+
+                // UNVERIFIED контакт: обновляем ключ, показываем предупреждение
+                val updated = existing.copy(
+                    publicKey = publicKey,
+                    fingerprint = fingerprint,
+                    trustStatus = TrustStatus.UNVERIFIED,
+                    updatedAt = System.currentTimeMillis()
+                )
+                contactDao.update(updated)
+                Log.i(TAG, "Публичный ключ $senderEmail обновлён (UNVERIFIED)")
+                notificationHelper?.showKeyChangeWarning(senderEmail, wasVerified = false)
+
+                // Отправляем свой ключ назад — собеседник переустановил и ему нужен наш ключ
+                if (config != null) {
+                    try {
+                        sendKeyExchange(config, senderEmail)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Не удалось отправить ответный key exchange: ${e.message}")
+                    }
                 }
                 return false
             }
@@ -156,6 +196,7 @@ class KeyExchangeManager(
 
     companion object {
         private const val TAG = "KeyExchangeManager"
+        private const val KEX_DEDUP_TTL_MS = 24 * 60 * 60 * 1000L // 24 часа
         const val KEX_PREFIX = "kex-"
         const val KEYEX_CHAT_ID = "KEYEX"
         const val KEYEX_CONTENT_TYPE = "application/x-cheburmail-keyex"

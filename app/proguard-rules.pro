@@ -51,3 +51,9 @@
 
 # ---- Enums ----
 -keepclassmembers enum * { *; }
+
+# ---- Security: strip debug/info logs in release ----
+-assumenosideeffects class android.util.Log {
+    public static int d(...);
+    public static int v(...);
+}
