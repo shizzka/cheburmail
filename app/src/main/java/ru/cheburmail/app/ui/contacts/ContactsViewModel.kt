@@ -127,6 +127,48 @@ class ContactsViewModel(
     }
 
     /**
+     * Переотправить ключ контакту (обновить связь).
+     * Контакт получит наш актуальный ключ и автоматически пришлёт свой.
+     */
+    private val _keyRefreshState = MutableStateFlow<KeyRefreshState>(KeyRefreshState.Idle)
+    val keyRefreshState: StateFlow<KeyRefreshState> = _keyRefreshState.asStateFlow()
+
+    fun refreshKey(contact: ContactEntity) {
+        _keyRefreshState.value = KeyRefreshState.Sending
+        viewModelScope.launch {
+            try {
+                val config = accountRepository?.getActive()
+                    ?: throw IllegalStateException("Нет активного аккаунта")
+
+                val keyExchangeManager = KeyExchangeManager(
+                    smtpClient = SmtpClient(),
+                    contactDao = contactDao,
+                    keyStorage = keyStorage
+                )
+
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    keyExchangeManager.sendKeyExchange(config, contact.email)
+                }
+
+                _keyRefreshState.value = KeyRefreshState.Success
+            } catch (e: Exception) {
+                _keyRefreshState.value = KeyRefreshState.Error(e.message ?: "Ошибка")
+            }
+        }
+    }
+
+    fun resetKeyRefreshState() {
+        _keyRefreshState.value = KeyRefreshState.Idle
+    }
+
+    sealed class KeyRefreshState {
+        data object Idle : KeyRefreshState()
+        data object Sending : KeyRefreshState()
+        data object Success : KeyRefreshState()
+        data class Error(val message: String) : KeyRefreshState()
+    }
+
+    /**
      * Обновить статус доверия контакта.
      */
     fun updateTrustStatus(contact: ContactEntity, status: TrustStatus) {
