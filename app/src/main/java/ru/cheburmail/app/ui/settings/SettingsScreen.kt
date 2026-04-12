@@ -51,7 +51,10 @@ import kotlinx.coroutines.launch
 import ru.cheburmail.app.messaging.DisappearingMessageManager
 import ru.cheburmail.app.storage.AppSettings
 import ru.cheburmail.app.transport.EmailConfig
+import ru.cheburmail.app.security.AppLockManager
+import ru.cheburmail.app.ui.lock.PinSetupDialog
 import ru.cheburmail.app.update.UpdateChecker
+import androidx.biometric.BiometricManager
 
 /**
  * Экран настроек приложения.
@@ -71,8 +74,21 @@ fun SettingsScreen(
     val bgSyncMin by viewModel.backgroundSyncIntervalMin.collectAsState()
     val screenshotsBlocked by viewModel.screenshotsBlocked.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
+    val imapAutoCleanup by viewModel.imapAutoCleanup.collectAsState()
     val clearingImap by viewModel.clearingImap.collectAsState()
     val imapClearResult by viewModel.imapClearResult.collectAsState()
+
+    val ctx = LocalContext.current
+    val appLockManager = remember { AppLockManager.getInstance(ctx) }
+    var pinEnabled by remember { mutableStateOf(appLockManager.isLockEnabled) }
+    var biometricEnabled by remember { mutableStateOf(appLockManager.isBiometricEnabled) }
+    var showPinSetup by remember { mutableStateOf(false) }
+    val hasBiometric = remember {
+        BiometricManager.from(ctx).canAuthenticate(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                BiometricManager.Authenticators.BIOMETRIC_WEAK
+        ) == BiometricManager.BIOMETRIC_SUCCESS
+    }
 
     var showDeleteDialog by remember { mutableStateOf<String?>(null) }
     var showClearImapDialog by remember { mutableStateOf(false) }
@@ -145,6 +161,18 @@ fun SettingsScreen(
                 TextButton(onClick = { viewModel.clearImapResult() }) {
                     Text("OK")
                 }
+            }
+        )
+    }
+
+    // Диалог установки PIN
+    if (showPinSetup) {
+        PinSetupDialog(
+            onDismiss = { showPinSetup = false },
+            onPinSet = { pin ->
+                appLockManager.setPin(pin)
+                pinEnabled = true
+                showPinSetup = false
             }
         )
     }
@@ -237,6 +265,37 @@ fun SettingsScreen(
                 )
             }
 
+            item {
+                SwitchRow(
+                    title = "PIN-код",
+                    subtitle = if (pinEnabled) "PIN включён" else "Защита входа в приложение",
+                    checked = pinEnabled,
+                    onCheckedChange = { enabled ->
+                        if (enabled) {
+                            showPinSetup = true
+                        } else {
+                            appLockManager.removePin()
+                            pinEnabled = false
+                            biometricEnabled = false
+                        }
+                    }
+                )
+            }
+
+            if (pinEnabled && hasBiometric) {
+                item {
+                    SwitchRow(
+                        title = "Биометрия",
+                        subtitle = "Разблокировка отпечатком / Face ID",
+                        checked = biometricEnabled,
+                        onCheckedChange = { enabled ->
+                            appLockManager.setBiometricEnabled(enabled)
+                            biometricEnabled = enabled
+                        }
+                    )
+                }
+            }
+
             item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
 
             // --- Секция: Уведомления ---
@@ -283,6 +342,15 @@ fun SettingsScreen(
             // --- Секция: Данные ---
             item {
                 SectionHeader("Данные")
+            }
+
+            item {
+                SwitchRow(
+                    title = "Автоочистка IMAP",
+                    subtitle = "Удалять письма старше 7 дней с сервера",
+                    checked = imapAutoCleanup,
+                    onCheckedChange = { viewModel.setImapAutoCleanup(it) }
+                )
             }
 
             item {

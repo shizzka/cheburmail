@@ -30,6 +30,7 @@ class AppSettings private constructor(private val context: Context) {
         val CHAT_SYNC_INTERVAL_SEC = longPreferencesKey("chat_sync_interval_sec")
         val BACKGROUND_SYNC_INTERVAL_MIN = longPreferencesKey("background_sync_interval_min")
         val SCREENSHOTS_BLOCKED = booleanPreferencesKey("screenshots_blocked")
+        val IMAP_AUTO_CLEANUP = booleanPreferencesKey("imap_auto_cleanup")
     }
 
     // ── Значения по умолчанию ─────────────────────────────────────────────
@@ -111,5 +112,15 @@ class AppSettings private constructor(private val context: Context) {
 
     suspend fun setScreenshotsBlocked(blocked: Boolean) {
         ds.edit { it[Keys.SCREENSHOTS_BLOCKED] = blocked }
+    }
+
+    // ── Автоочистка IMAP ──────────────────────────────────────────────────
+
+    val imapAutoCleanup: Flow<Boolean> = ds.data.map {
+        it[Keys.IMAP_AUTO_CLEANUP] ?: true // включено по умолчанию
+    }
+
+    suspend fun setImapAutoCleanup(enabled: Boolean) {
+        ds.edit { it[Keys.IMAP_AUTO_CLEANUP] = enabled }
     }
 }

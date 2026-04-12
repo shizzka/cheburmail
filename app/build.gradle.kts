@@ -37,8 +37,8 @@ android {
         applicationId = "ru.cheburmail.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.2.1"
+        versionCode = 5
+        versionName = "0.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -131,6 +131,12 @@ dependencies {
 
     // Coil
     implementation(libs.coil.compose)
+
+    // Biometric
+    implementation(libs.biometric)
+
+    // SQLCipher
+    implementation(libs.sqlcipher)
 
     // ExifInterface for EXIF rotation handling
     implementation("androidx.exifinterface:exifinterface:1.4.1")

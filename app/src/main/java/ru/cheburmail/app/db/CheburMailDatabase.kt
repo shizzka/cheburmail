@@ -1,12 +1,14 @@
 package ru.cheburmail.app.db
 
 import android.content.Context
+import android.util.Log
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 import ru.cheburmail.app.db.dao.ChatDao
 import ru.cheburmail.app.db.dao.ContactDao
 import ru.cheburmail.app.db.dao.MessageDao
@@ -86,13 +88,71 @@ abstract class CheburMailDatabase : RoomDatabase() {
 
         fun getInstance(context: Context): CheburMailDatabase =
             INSTANCE ?: synchronized(this) {
-                INSTANCE ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    CheburMailDatabase::class.java,
-                    DB_NAME
-                )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
-                    .build().also { INSTANCE = it }
+                INSTANCE ?: buildDatabase(context.applicationContext).also { INSTANCE = it }
             }
+
+        private fun buildDatabase(context: Context): CheburMailDatabase {
+            // Загружаем нативную библиотеку SQLCipher
+            System.loadLibrary("sqlcipher")
+
+            val keyManager = DatabaseKeyManager(context)
+            val dbKey = keyManager.getOrCreateKey()
+
+            // Миграция с незашифрованной БД если она существует
+            migrateToEncrypted(context, dbKey)
+
+            val factory = SupportOpenHelperFactory(dbKey)
+
+            return Room.databaseBuilder(
+                context,
+                CheburMailDatabase::class.java,
+                DB_NAME
+            )
+                .openHelperFactory(factory)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .build()
+        }
+
+        /**
+         * Мигрирует незашифрованную БД в зашифрованную (одноразово).
+         * Создаёт зашифрованную копию, затем заменяет оригинал.
+         */
+        private fun migrateToEncrypted(context: Context, key: ByteArray) {
+            val dbFile = context.getDatabasePath(DB_NAME)
+            if (!dbFile.exists()) return
+
+            val marker = context.getSharedPreferences("cheburmail_db_key", Context.MODE_PRIVATE)
+            if (marker.getBoolean("migrated_to_encrypted", false)) return
+
+            val tempFile = context.getDatabasePath("${DB_NAME}_encrypted")
+            try {
+                // Открываем незашифрованную БД
+                val unencryptedDb = net.zetetic.database.sqlcipher.SQLiteDatabase.openDatabase(
+                    dbFile.absolutePath, "", null,
+                    net.zetetic.database.sqlcipher.SQLiteDatabase.OPEN_READWRITE,
+                    null, null
+                )
+
+                // Шифруем через sqlcipher_export
+                val keyHex = key.joinToString("") { "%02x".format(it) }
+                unencryptedDb.rawExecSQL("ATTACH DATABASE '${tempFile.absolutePath}' AS encrypted KEY \"x'$keyHex'\"")
+                unencryptedDb.rawExecSQL("SELECT sqlcipher_export('encrypted')")
+                unencryptedDb.rawExecSQL("DETACH DATABASE encrypted")
+                unencryptedDb.close()
+
+                // Заменяем оригинал
+                dbFile.delete()
+                tempFile.renameTo(dbFile)
+
+                marker.edit().putBoolean("migrated_to_encrypted", true).apply()
+                Log.i("CheburMailDB", "Database migrated to encrypted successfully")
+            } catch (e: Exception) {
+                Log.e("CheburMailDB", "Failed to migrate to encrypted DB: ${e.message}", e)
+                // Если миграция не удалась — удаляем битую зашифрованную копию
+                tempFile.delete()
+                // Пометим как мигрированную, но с чистой БД
+                // Незашифрованная БД останется и Room пересоздаст
+            }
+        }
     }
 }
