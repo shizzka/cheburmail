@@ -105,6 +105,16 @@ class KeyExchangeManager(
                     )
                     contactDao.update(updated)
                     Log.i(TAG, "Публичный ключ $senderEmail обновлён (сброшен в UNVERIFIED)")
+
+                    // Отправляем свой ключ назад — собеседник переустановил и ему нужен наш ключ
+                    if (config != null) {
+                        try {
+                            sendKeyExchange(config, senderEmail)
+                            Log.i(TAG, "Ответный key exchange отправлен (переустановка): -> $senderEmail")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Не удалось отправить ответный key exchange: ${e.message}")
+                        }
+                    }
                 } else {
                     Log.d(TAG, "Контакт $senderEmail уже существует, ключ не изменился")
                 }
