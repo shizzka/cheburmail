@@ -28,7 +28,7 @@ open class SmtpClient {
      */
     open fun send(config: EmailConfig, message: EmailMessage) {
         try {
-            Log.d(TAG, "Отправка письма: ${message.from} -> ${message.to}, subject: ${message.subject}")
+            Log.d(TAG, "Отправка письма")
 
             val props = Properties().apply {
                 put("mail.smtp.host", config.smtpHost)
@@ -67,7 +67,7 @@ open class SmtpClient {
             }
 
             Transport.send(mimeMessage)
-            Log.i(TAG, "Письмо успешно отправлено: ${message.subject}")
+            Log.i(TAG, "Письмо успешно отправлено")
         } catch (e: TransportException) {
             throw e
         } catch (e: Exception) {
@@ -89,7 +89,7 @@ open class SmtpClient {
     open fun sendWithAttachment(config: EmailConfig, message: EmailMessage) {
         requireNotNull(message.attachment) { "attachment must not be null for sendWithAttachment" }
         try {
-            Log.d(TAG, "Отправка медиа-письма: ${message.from} -> ${message.to}, subject: ${message.subject}")
+            Log.d(TAG, "Отправка медиа-письма")
 
             val props = Properties().apply {
                 put("mail.smtp.host", config.smtpHost)
@@ -138,7 +138,7 @@ open class SmtpClient {
             }
 
             Transport.send(mimeMessage)
-            Log.i(TAG, "Медиа-письмо успешно отправлено: ${message.subject}")
+            Log.i(TAG, "Медиа-письмо успешно отправлено")
         } catch (e: TransportException) {
             throw e
         } catch (e: Exception) {

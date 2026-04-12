@@ -47,8 +47,19 @@ class NotificationHelper(private val context: Context) {
                 setShowBadge(false)
             }
 
+            val securityChannel = NotificationChannel(
+                CHANNEL_SECURITY,
+                "Безопасность",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Предупреждения о смене ключей и безопасности"
+                enableVibration(true)
+                setShowBadge(true)
+            }
+
             notificationManager.createNotificationChannel(messagesChannel)
             notificationManager.createNotificationChannel(syncChannel)
+            notificationManager.createNotificationChannel(securityChannel)
         }
     }
 
@@ -95,6 +106,55 @@ class NotificationHelper(private val context: Context) {
     }
 
     /**
+     * Показать предупреждение о смене ключа контакта.
+     *
+     * @param contactEmail email контакта
+     * @param wasVerified был ли контакт верифицирован (VERIFIED → более серьёзное предупреждение)
+     */
+    fun showKeyChangeWarning(contactEmail: String, wasVerified: Boolean) {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            contactEmail.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val title = if (wasVerified) {
+            "⚠ Ключ верифицированного контакта изменён!"
+        } else {
+            "Ключ контакта обновлён"
+        }
+
+        val text = if (wasVerified) {
+            "$contactEmail сменил ключ шифрования. Ключ НЕ обновлён автоматически. " +
+                "Используйте «Обновить ключ» и заново верифицируйте контакт."
+        } else {
+            "$contactEmail сменил ключ шифрования (возможно переустановка). " +
+                "Ключ обновлён. Рекомендуем верифицировать контакт."
+        }
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_SECURITY)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        notificationManager.notify(
+            SECURITY_NOTIFICATION_BASE + contactEmail.hashCode(),
+            notification
+        )
+    }
+
+    /**
      * Создать persistent-уведомление для Foreground Service синхронизации.
      * Низкий приоритет, без звука и вибрации.
      *
@@ -125,7 +185,9 @@ class NotificationHelper(private val context: Context) {
     companion object {
         const val CHANNEL_MESSAGES = "cheburmail_messages"
         const val CHANNEL_SYNC = "cheburmail_sync"
+        const val CHANNEL_SECURITY = "cheburmail_security"
         const val SYNC_NOTIFICATION_ID = 1001
+        const val SECURITY_NOTIFICATION_BASE = 2000
         const val EXTRA_CHAT_ID = "extra_chat_id"
     }
 }
