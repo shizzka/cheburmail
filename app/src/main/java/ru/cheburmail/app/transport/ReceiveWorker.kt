@@ -57,6 +57,14 @@ class ReceiveWorker(
 ) {
 
     /**
+     * Wipe the private key from memory after use.
+     * Call this in a finally block after pollAndProcess completes.
+     */
+    fun wipePrivateKey() {
+        recipientPrivateKey.fill(0)
+    }
+
+    /**
      * Poll IMAP and process new messages.
      *
      * @param config IMAP configuration
@@ -77,10 +85,17 @@ class ReceiveWorker(
         // Обрабатываем key exchange сообщения
         for (kexEmail in received.keyExchangeEmails) {
             try {
+                // Извлекаем UUID из subject для дедупликации
+                val kexUuid = kexEmail.subject
+                    .removePrefix(EmailMessage.SUBJECT_PREFIX)
+                    .substringAfter(KeyExchangeManager.KEX_PREFIX, "")
+                    .takeIf { it.isNotEmpty() }
+
                 keyExchangeManager?.handleKeyExchange(
                     body = kexEmail.body,
                     fromEmail = kexEmail.from,
-                    config = emailConfig
+                    config = emailConfig,
+                    kexUuid = kexUuid
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing key exchange from ${kexEmail.from}: ${e.message}")

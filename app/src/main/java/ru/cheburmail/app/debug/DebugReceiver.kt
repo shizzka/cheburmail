@@ -132,13 +132,13 @@ class DebugReceiver : BroadcastReceiver() {
         val msgs = db.messageDao().getAllOnce()
         Log.i(TAG, "MESSAGES (${msgs.size}):")
         for (m in msgs) {
-            Log.i(TAG, "  [${m.id.take(8)}] chat=${m.chatId.take(8)} out=${m.isOutgoing} status=${m.status} text='${m.plaintext.take(50)}'")
+            Log.i(TAG, "  [${m.id.take(8)}] chat=${m.chatId.take(8)} out=${m.isOutgoing} status=${m.status} len=${m.plaintext.length}")
         }
 
         val queue = db.sendQueueDao().getAll()
         Log.i(TAG, "SEND_QUEUE (${queue.size}):")
         for (q in queue) {
-            Log.i(TAG, "  [${q.id}] msg=${q.messageId.take(8)} to=${q.recipientEmail} status=${q.status} retry=${q.retryCount}")
+            Log.i(TAG, "  [${q.id}] msg=${q.messageId.take(8)} to=*** status=${q.status} retry=${q.retryCount}")
         }
     }
 

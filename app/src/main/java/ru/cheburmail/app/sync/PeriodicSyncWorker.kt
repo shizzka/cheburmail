@@ -80,10 +80,13 @@ class PeriodicSyncWorker(
                 decryptor = decryptor
             )
 
+            val notifHelper = ru.cheburmail.app.notification.NotificationHelper(applicationContext)
+
             val keyExchangeManager = KeyExchangeManager(
                 smtpClient = smtpClient,
                 contactDao = db.contactDao(),
-                keyStorage = keyStorage
+                keyStorage = keyStorage,
+                notificationHelper = notifHelper
             )
 
             val receiveWorker = ReceiveWorker(
@@ -93,13 +96,18 @@ class PeriodicSyncWorker(
                 messageDao = db.messageDao(),
                 contactDao = db.contactDao(),
                 chatDao = db.chatDao(),
-                notificationHelper = ru.cheburmail.app.notification.NotificationHelper(applicationContext),
+                notificationHelper = notifHelper,
                 recipientPrivateKey = keyPair.getPrivateKey(),
                 keyExchangeManager = keyExchangeManager,
                 emailConfig = config
             )
 
-            val received = receiveWorker.pollAndProcess(config)
+            val received: Int
+            try {
+                received = receiveWorker.pollAndProcess(config)
+            } finally {
+                receiveWorker.wipePrivateKey()
+            }
             Log.i(TAG, "Получено $received новых сообщений")
 
             // Отправка очереди

@@ -212,10 +212,13 @@ class ImapIdleService : Service() {
                     decryptor = MessageDecryptor(ls)
                 )
 
+                val notifHelper = NotificationHelper(applicationContext)
+
                 val keyExchangeManager = KeyExchangeManager(
                     smtpClient = SmtpClient(),
                     contactDao = db.contactDao(),
-                    keyStorage = keyStorage
+                    keyStorage = keyStorage,
+                    notificationHelper = notifHelper
                 )
 
                 val receiveWorker = ReceiveWorker(
@@ -225,13 +228,18 @@ class ImapIdleService : Service() {
                     messageDao = db.messageDao(),
                     contactDao = db.contactDao(),
                     chatDao = db.chatDao(),
-                    notificationHelper = NotificationHelper(applicationContext),
+                    notificationHelper = notifHelper,
                     recipientPrivateKey = keyPair.getPrivateKey(),
                     keyExchangeManager = keyExchangeManager,
                     emailConfig = config
                 )
 
-                val received = receiveWorker.pollAndProcess(config)
+                val received: Int
+                try {
+                    received = receiveWorker.pollAndProcess(config)
+                } finally {
+                    receiveWorker.wipePrivateKey()
+                }
                 Log.i(TAG, "Синхронизация завершена: $received новых сообщений")
             } catch (e: Exception) {
                 Log.e(TAG, "Ошибка синхронизации: ${e.message}")
