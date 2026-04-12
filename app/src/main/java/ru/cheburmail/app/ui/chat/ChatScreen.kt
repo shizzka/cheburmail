@@ -2,6 +2,7 @@ package ru.cheburmail.app.ui.chat
 
 import android.Manifest
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -315,6 +316,11 @@ fun ChatScreen(
                     cameraLauncher.launch(uri)
                 }
             )
+        }
+
+        // Перехватываем Back при открытом фото — закрываем просмотр, а не уходим из чата
+        BackHandler(enabled = fullScreenImagePath != null) {
+            fullScreenImagePath = null
         }
 
         // Полноэкранный просмотр изображения (overlay)
