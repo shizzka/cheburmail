@@ -5,7 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,10 +18,16 @@ import ru.cheburmail.app.db.CheburMailDatabase
 import ru.cheburmail.app.repository.AccountRepository
 import ru.cheburmail.app.storage.AppSettings
 import ru.cheburmail.app.storage.SecureKeyStorage
+import ru.cheburmail.app.security.AppLockManager
+import ru.cheburmail.app.ui.lock.LockScreen
 import ru.cheburmail.app.ui.navigation.AppNavigation
 import ru.cheburmail.app.ui.theme.CheburMailTheme
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -59,14 +65,27 @@ class MainActivity : ComponentActivity() {
             ru.cheburmail.app.notification.NotificationHelper.EXTRA_CHAT_ID
         )
 
+        val appLockManager = AppLockManager.getInstance(applicationContext)
+
         setContent {
             CheburMailTheme {
-                AppNavigation(
-                    accountRepository = accountRepository,
-                    database = database,
-                    keyStorage = keyStorage,
-                    initialChatId = initialChatId
-                )
+                var isLocked by remember {
+                    mutableStateOf(appLockManager.isLockEnabled)
+                }
+
+                if (isLocked) {
+                    LockScreen(
+                        appLockManager = appLockManager,
+                        onUnlocked = { isLocked = false }
+                    )
+                } else {
+                    AppNavigation(
+                        accountRepository = accountRepository,
+                        database = database,
+                        keyStorage = keyStorage,
+                        initialChatId = initialChatId
+                    )
+                }
             }
         }
     }
