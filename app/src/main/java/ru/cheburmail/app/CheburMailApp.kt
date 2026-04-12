@@ -11,6 +11,7 @@ import ru.cheburmail.app.notification.NotificationHelper
 import ru.cheburmail.app.storage.EncryptedDataStoreFactory
 import ru.cheburmail.app.storage.SecureKeyStorage
 import ru.cheburmail.app.sync.SyncManager
+import ru.cheburmail.app.transport.ScheduledCleanupWorker
 import ru.cheburmail.app.update.UpdateCheckWorker
 
 class CheburMailApp : Application() {
@@ -42,6 +43,9 @@ class CheburMailApp : Application() {
 
             // Проверка обновлений раз в день
             UpdateCheckWorker.schedule(this@CheburMailApp)
+
+            // Автоочистка IMAP раз в день
+            ScheduledCleanupWorker.schedule(this@CheburMailApp)
         }
     }
 }

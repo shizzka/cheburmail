@@ -18,6 +18,7 @@ import ru.cheburmail.app.repository.AccountRepository
 import ru.cheburmail.app.storage.AppSettings
 import ru.cheburmail.app.transport.EmailConfig
 import ru.cheburmail.app.transport.ImapClient
+import ru.cheburmail.app.transport.ScheduledCleanupWorker
 
 /**
  * ViewModel экрана настроек.
@@ -59,6 +60,10 @@ class SettingsViewModel(
     val screenshotsBlocked: StateFlow<Boolean> = appSettings.screenshotsBlocked
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
+    /** Автоочистка IMAP */
+    val imapAutoCleanup: StateFlow<Boolean> = appSettings.imapAutoCleanup
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
     /** Сообщение об ошибке */
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
@@ -96,6 +101,17 @@ class SettingsViewModel(
 
     fun setScreenshotsBlocked(blocked: Boolean) {
         viewModelScope.launch { appSettings.setScreenshotsBlocked(blocked) }
+    }
+
+    fun setImapAutoCleanup(enabled: Boolean) {
+        viewModelScope.launch {
+            appSettings.setImapAutoCleanup(enabled)
+            if (enabled) {
+                ScheduledCleanupWorker.schedule(appContext)
+            } else {
+                ScheduledCleanupWorker.cancel(appContext)
+            }
+        }
     }
 
     /**
