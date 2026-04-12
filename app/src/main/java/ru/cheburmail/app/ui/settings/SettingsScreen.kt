@@ -35,18 +35,23 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import ru.cheburmail.app.messaging.DisappearingMessageManager
 import ru.cheburmail.app.storage.AppSettings
 import ru.cheburmail.app.transport.EmailConfig
+import ru.cheburmail.app.update.UpdateChecker
 
 /**
  * Экран настроек приложения.
@@ -323,8 +328,73 @@ fun SettingsScreen(
             }
 
             item {
-                InfoRow(title = "Версия", value = "1.0.0")
+                val ctx = LocalContext.current
+                val pkgInfo = remember {
+                    try {
+                        ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+                    } catch (_: Exception) { null }
+                }
+                val versionName = pkgInfo?.versionName ?: "?"
+                val versionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    pkgInfo?.longVersionCode?.toString() ?: "?"
+                } else {
+                    @Suppress("DEPRECATION")
+                    pkgInfo?.versionCode?.toString() ?: "?"
+                }
+                InfoRow(title = "Версия", value = "$versionName ($versionCode)")
             }
+
+            item {
+                val ctx = LocalContext.current
+                val scope = rememberCoroutineScope()
+                var checking by remember { mutableStateOf(false) }
+                var result by remember { mutableStateOf<String?>(null) }
+
+                Column {
+                    Button(
+                        onClick = {
+                            checking = true
+                            result = null
+                            scope.launch {
+                                val update = UpdateChecker.check(ctx)
+                                checking = false
+                                result = if (update != null) {
+                                    "Доступно обновление ${update.latestVersionName}"
+                                } else {
+                                    "У вас последняя версия"
+                                }
+                            }
+                        },
+                        enabled = !checking,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (checking) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Проверка...")
+                        } else {
+                            Text("Проверить обновления")
+                        }
+                    }
+
+                    result?.let { text ->
+                        Text(
+                            text = text,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (text.contains("Доступно"))
+                                MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+            }
+
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
 
             item {
                 InfoRow(title = "Шифрование", value = "X25519 + XSalsa20-Poly1305 (NaCl)")
