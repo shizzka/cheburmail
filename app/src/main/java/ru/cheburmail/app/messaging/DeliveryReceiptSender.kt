@@ -46,7 +46,7 @@ class DeliveryReceiptSender(
         try {
             // Получаем публичный ключ отправителя для шифрования ACK
             val contact = contactDao.getByEmail(senderEmail) ?: run {
-                Log.w(TAG, "Контакт $senderEmail не найден, ACK не отправлен")
+                Log.w(TAG, "Контакт не найден, ACK не отправлен")
                 return
             }
 
@@ -74,7 +74,7 @@ class DeliveryReceiptSender(
             )
 
             smtpClient.send(config, emailMessage)
-            Log.i(TAG, "ACK отправлен для сообщения $originalMsgUuid -> $senderEmail")
+            Log.i(TAG, "ACK отправлен")
 
         } catch (e: TransportException.SmtpException) {
             Log.e(TAG, "Ошибка SMTP при отправке ACK для $originalMsgUuid: ${e.message}")

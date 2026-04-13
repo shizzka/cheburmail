@@ -96,6 +96,7 @@ class EmailCleanupWorker(
             put("mail.imap.host", config.imapHost)
             put("mail.imap.port", config.imapPort.toString())
             put("mail.imap.ssl.enable", "true")
+            put("mail.imap.ssl.checkserveridentity", "true")
             put("mail.imap.connectiontimeout", "15000")
             put("mail.imap.timeout", "15000")
         }
