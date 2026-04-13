@@ -6,6 +6,22 @@ No custom servers. No phone number required. Your messages travel through standa
 
 [README на русском](README.ru.md)
 
+## Why CheburMail and not Signal / Telegram / WhatsApp?
+
+| | CheburMail | Signal | Telegram | WhatsApp |
+|---|---|---|---|---|
+| **Works in Russia without VPN** | Yes — uses Yandex/Mail.ru (whitelisted domestic servers) | Blocked since 2024, requires VPN | Partially blocked, unstable | Works, but Meta servers can be blocked at any time |
+| **Survives "sovereign internet" (Cheburnet)** | Yes — email is domestic infrastructure | No — depends on foreign servers | No — servers abroad | No — servers abroad |
+| **Requires phone number** | No — just an email account | Yes | Yes | Yes |
+| **Custom servers to maintain** | None — piggybacks on email | Signal Foundation servers | Telegram servers | Meta servers |
+| **E2E encryption** | Yes (X25519 + XSalsa20-Poly1305) | Yes (Signal Protocol) | Only "secret chats" | Yes (Signal Protocol) |
+| **Open source** | Yes | Yes | Client only | No |
+| **Can be shut down by blocking a domain** | No — works over any Russian email provider | Yes | Yes | Yes |
+
+**The core idea**: Russian email providers (Yandex, Mail.ru) are part of the country's approved communications infrastructure. They will be the last services to be blocked — if ever. CheburMail uses them as a transport layer while encrypting everything client-side. The provider sees who talks to whom, but never the content.
+
+**"Cheburnet"** is the colloquial term for Russia's sovereign internet — a scenario where foreign services are cut off. In that world, Signal is dead, Telegram is unreliable, but **email still works**. CheburMail is built for that scenario.
+
 ## How It Works
 
 CheburMail turns your email account into a secure messaging channel:
@@ -47,6 +63,10 @@ You (encrypt) → SMTP → Email Provider → IMAP → Recipient (decrypt)
 - **Background sync** via WorkManager + IMAP IDLE
 - **Screenshot protection** in chat screens
 - **No tracking, no analytics, no ads**
+
+- **PIN / biometric lock** — protect the app with a PIN code or fingerprint
+- **IMAP auto-cleanup** — automatically delete processed emails older than 7 days
+- **Auto-update checker** — get notified when a new version is available
 
 ### In Development
 - **Group chats** with E2E encryption
@@ -130,7 +150,8 @@ Not yet. Currently supports Yandex Mail and Mail.ru. Adding more providers is st
 
 ## Download
 
-Get the latest APK from the distribution bot: [@my_fabrica_bot](https://t.me/my_fabrica_bot) (send `/cheburmail`)
+- **Telegram bot**: [@my_fabrica_bot](https://t.me/my_fabrica_bot) — press "Download APK"
+- **GitHub Releases**: [latest release](https://github.com/shizzka/cheburmail/releases/latest)
 
 ## License
 
