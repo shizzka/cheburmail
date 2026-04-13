@@ -68,7 +68,7 @@ class KeyExchangeManager(
         )
 
         smtpClient.send(config, emailMessage)
-        Log.i(TAG, "Key exchange отправлен: ${config.email} -> $targetEmail")
+        Log.i(TAG, "Key exchange отправлен")
     }
 
     /**
@@ -133,8 +133,7 @@ class KeyExchangeManager(
                 // Ключ изменился! Поведение зависит от статуса верификации
                 if (existing.trustStatus == TrustStatus.VERIFIED) {
                     // VERIFIED контакт: НЕ обновляем ключ автоматически (защита от MITM)
-                    Log.w(TAG, "ОТКЛОНЕНО: смена ключа VERIFIED контакта $senderEmail. " +
-                        "Требуется ручное обновление.")
+                    Log.w(TAG, "ОТКЛОНЕНО: смена ключа VERIFIED контакта. Требуется ручное обновление.")
                     notificationHelper?.showKeyChangeWarning(senderEmail, wasVerified = true)
                     return false
                 }
@@ -147,7 +146,7 @@ class KeyExchangeManager(
                     updatedAt = System.currentTimeMillis()
                 )
                 contactDao.update(updated)
-                Log.i(TAG, "Публичный ключ $senderEmail обновлён (UNVERIFIED)")
+                Log.i(TAG, "Публичный ключ контакта обновлён (UNVERIFIED)")
                 notificationHelper?.showKeyChangeWarning(senderEmail, wasVerified = false)
 
                 // Отправляем свой ключ назад — собеседник переустановил и ему нужен наш ключ
@@ -173,13 +172,13 @@ class KeyExchangeManager(
             )
 
             contactDao.insert(contact)
-            Log.i(TAG, "Контакт добавлен через key exchange: $senderEmail (UNVERIFIED)")
+            Log.i(TAG, "Контакт добавлен через key exchange (UNVERIFIED)")
 
             // Отправляем свой ключ назад
             if (config != null) {
                 try {
                     sendKeyExchange(config, senderEmail)
-                    Log.i(TAG, "Ответный key exchange отправлен: -> $senderEmail")
+                    Log.i(TAG, "Ответный key exchange отправлен")
                 } catch (e: Exception) {
                     Log.w(TAG, "Не удалось отправить ответный key exchange: ${e.message}")
                     // Контакт уже создан — это не критично
