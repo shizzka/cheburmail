@@ -91,6 +91,8 @@ fun ChatScreen(
     val isSendingMedia by viewModel.isSendingMedia.collectAsState()
     val sendingMediaLabel by viewModel.sendingMediaLabel.collectAsState()
     val replyTo by viewModel.replyTo.collectAsState()
+    val userError by viewModel.userError.collectAsState()
+    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val showScrollToBottom by remember {
@@ -219,7 +221,15 @@ fun ChatScreen(
         )
     }
 
+    LaunchedEffect(userError) {
+        userError?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearUserError()
+        }
+    }
+
     Scaffold(
+        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(chatTitle ?: "Чат") },
