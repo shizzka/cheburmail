@@ -20,10 +20,6 @@
 -dontwarn javax.mail.**
 -dontwarn javax.activation.**
 
-# ---- SQLCipher ----
--keep class net.zetetic.database.** { *; }
--dontwarn net.zetetic.database.**
-
 # ---- Room ----
 -keep class * extends androidx.room.RoomDatabase { *; }
 -keep @androidx.room.Entity class * { *; }
