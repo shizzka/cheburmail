@@ -52,6 +52,7 @@ import ru.cheburmail.app.transport.ReceiveWorker
 import ru.cheburmail.app.transport.RetryStrategy
 import ru.cheburmail.app.transport.SmtpClient
 import ru.cheburmail.app.transport.TransportService
+import ru.cheburmail.app.messaging.ChatIdGenerator
 import java.util.UUID
 
 /**
@@ -65,7 +66,8 @@ class ChatViewModel(
     private val contactDao: ContactDao,
     private val sendQueueDao: SendQueueDao,
     private val keyStorage: SecureKeyStorage,
-    private val appContext: Context
+    private val appContext: Context,
+    private val myEmail: String = ""
 ) : ViewModel() {
 
     val messages: StateFlow<List<MessageEntity>> = messageDao.getForChat(chatId)
@@ -132,15 +134,34 @@ class ChatViewModel(
         viewModelScope.launch {
             val contacts = withContext(Dispatchers.IO) { contactDao.getAllOnce() }
 
-            // Strategy 1: deterministic UUID from "direct:<email>"
+            // Strategy 1: deterministic UUID from sorted email pair
             for (contact in contacts) {
-                val expectedChatId = UUID.nameUUIDFromBytes(
-                    "direct:${contact.email}".toByteArray()
-                ).toString()
+                val expectedChatId = if (myEmail.isNotEmpty()) {
+                    ChatIdGenerator.directChatId(myEmail, contact.email)
+                } else {
+                    // Fallback для старого формата (только email контакта)
+                    UUID.nameUUIDFromBytes(
+                        "direct:${contact.email}".toByteArray()
+                    ).toString()
+                }
                 if (expectedChatId == chatId) {
                     recipientEmail = contact.email
                     _chatTitle.value = contact.displayName
                     break
+                }
+            }
+
+            // Strategy 1b: check old single-email format for backwards compat
+            if (recipientEmail == null) {
+                for (contact in contacts) {
+                    val oldChatId = UUID.nameUUIDFromBytes(
+                        "direct:${contact.email}".toByteArray()
+                    ).toString()
+                    if (oldChatId == chatId) {
+                        recipientEmail = contact.email
+                        _chatTitle.value = contact.displayName
+                        break
+                    }
                 }
             }
 

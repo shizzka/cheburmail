@@ -33,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import ru.cheburmail.app.messaging.ChatIdGenerator
 import java.util.UUID
 
 /**
@@ -69,6 +70,14 @@ fun AppNavigation(
 ) {
     val hasAccounts by accountRepository.observeHasAccounts()
         .collectAsState(initial = false)
+
+    // Кэшируем email текущего аккаунта для генерации chatId
+    var myEmail by remember { mutableStateOf("") }
+    LaunchedEffect(hasAccounts) {
+        if (hasAccounts) {
+            myEmail = accountRepository.getActive()?.email ?: ""
+        }
+    }
 
     val startDestination = if (hasAccounts) Routes.CHAT_LIST else Routes.ONBOARDING
 
@@ -141,7 +150,8 @@ fun AppNavigation(
                 contactDao = database.contactDao(),
                 sendQueueDao = database.sendQueueDao(),
                 keyStorage = keyStorage,
-                appContext = navController.context.applicationContext
+                appContext = navController.context.applicationContext,
+                myEmail = myEmail
             )
             ChatScreen(
                 viewModel = chatViewModel,
@@ -153,7 +163,7 @@ fun AppNavigation(
             NewChatScreen(
                 contactsViewModel = contactsViewModel,
                 onContactSelected = { contact ->
-                    handleNewChat(contact, database, navController)
+                    handleNewChat(contact, myEmail, database, navController)
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -221,13 +231,13 @@ fun AppNavigation(
  */
 private fun handleNewChat(
     contact: ContactEntity,
+    myEmail: String,
     database: CheburMailDatabase,
     navController: NavHostController
 ) {
-    // Генерируем детерминированный ID чата из email контакта
-    val chatId = UUID.nameUUIDFromBytes(
-        "direct:${contact.email}".toByteArray()
-    ).toString()
+    // Детерминированный ID из отсортированной пары email'ов —
+    // обе стороны вычислят одинаковый chatId
+    val chatId = ChatIdGenerator.directChatId(myEmail, contact.email)
 
     // Навигируем в чат (создание ChatEntity при первом сообщении)
     navController.navigate(Routes.chat(chatId)) {
