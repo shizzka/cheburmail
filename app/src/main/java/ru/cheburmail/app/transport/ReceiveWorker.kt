@@ -17,6 +17,7 @@ import ru.cheburmail.app.group.ControlMessageHandler
 import ru.cheburmail.app.media.MediaDecryptor
 import ru.cheburmail.app.media.MediaFileManager
 import ru.cheburmail.app.media.MediaMetadata
+import ru.cheburmail.app.messaging.ChatIdGenerator
 import ru.cheburmail.app.messaging.DeliveryReceiptHandler
 import ru.cheburmail.app.messaging.DeliveryReceiptSender
 import ru.cheburmail.app.messaging.KeyExchangeManager
@@ -147,6 +148,14 @@ class ReceiveWorker(
                     continue
                 }
 
+                // Compute correct chatId from both emails (sorted pair)
+                // The sender may use an old single-email format — remap to canonical pair-based ID
+                val correctChatId = if (emailConfig != null) {
+                    ChatIdGenerator.directChatId(emailConfig.email, contact.email)
+                } else {
+                    msg.chatId
+                }
+
                 // Decrypt
                 Log.d(TAG, "Decrypting ${msg.msgUuid} from ${msg.fromEmail}")
                 val plaintext = decryptor.decrypt(
@@ -180,16 +189,16 @@ class ReceiveWorker(
                 // Ensure chat exists before saving message (FK constraint)
                 val now = System.currentTimeMillis()
                 if (chatDao != null) {
-                    val existingChat = chatDao.getById(msg.chatId)
+                    val existingChat = chatDao.getById(correctChatId)
                     if (existingChat == null) {
                         chatDao.insert(ChatEntity(
-                            id = msg.chatId,
+                            id = correctChatId,
                             type = ChatType.DIRECT,
                             title = contact.displayName,
                             createdAt = now,
                             updatedAt = now
                         ))
-                        Log.d(TAG, "Created chat ${msg.chatId} for ${contact.email}")
+                        Log.d(TAG, "Created chat $correctChatId for ${contact.email}")
                     }
                 }
 
@@ -209,7 +218,7 @@ class ReceiveWorker(
                 // Save to Room
                 val entity = MessageEntity(
                     id = msg.msgUuid,
-                    chatId = msg.chatId,
+                    chatId = correctChatId,
                     senderContactId = contact.id,
                     isOutgoing = false,
                     plaintext = actualText,
@@ -227,14 +236,14 @@ class ReceiveWorker(
                 notificationHelper?.showMessageNotification(
                     senderName = contact.displayName,
                     preview = actualText.take(100),
-                    chatId = msg.chatId
+                    chatId = correctChatId
                 )
 
                 // Отправляем ACK (подтверждение доставки) обратно отправителю
                 try {
                     deliveryReceiptSender?.sendAck(
                         config = config,
-                        chatId = msg.chatId,
+                        chatId = correctChatId,
                         originalMsgUuid = msg.msgUuid,
                         senderEmail = msg.fromEmail,
                         timestamp = now
@@ -268,6 +277,13 @@ class ReceiveWorker(
                         continue
                     }
 
+                    // Compute correct chatId from both emails
+                    val correctMediaChatId = if (emailConfig != null) {
+                        ChatIdGenerator.directChatId(emailConfig.email, contact.email)
+                    } else {
+                        mediaMsg.chatId
+                    }
+
                     val decryptedMedia = mediaDecryptor.decrypt(
                         metadataEnvelope = mediaMsg.metadataEnvelope,
                         payloadEnvelope = mediaMsg.payloadEnvelope,
@@ -279,10 +295,10 @@ class ReceiveWorker(
 
                     // Убеждаемся что чат существует
                     if (chatDao != null) {
-                        val existingChat = chatDao.getById(mediaMsg.chatId)
+                        val existingChat = chatDao.getById(correctMediaChatId)
                         if (existingChat == null) {
                             chatDao.insert(ChatEntity(
-                                id = mediaMsg.chatId,
+                                id = correctMediaChatId,
                                 type = ChatType.DIRECT,
                                 title = contact.displayName,
                                 createdAt = now,
@@ -325,7 +341,7 @@ class ReceiveWorker(
 
                     val entity = MessageEntity(
                         id = mediaMsg.msgUuid,
-                        chatId = mediaMsg.chatId,
+                        chatId = correctMediaChatId,
                         senderContactId = contact.id,
                         isOutgoing = false,
                         plaintext = metadata.caption,
@@ -355,7 +371,7 @@ class ReceiveWorker(
                     notificationHelper?.showMessageNotification(
                         senderName = contact.displayName,
                         preview = notifPreview,
-                        chatId = mediaMsg.chatId
+                        chatId = correctMediaChatId
                     )
 
                 } catch (e: CryptoException) {
