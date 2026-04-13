@@ -112,6 +112,11 @@ class ChatViewModel(
     private val _sendingMediaLabel = MutableStateFlow("Отправка...")
     val sendingMediaLabel: StateFlow<String> = _sendingMediaLabel.asStateFlow()
 
+    private val _userError = MutableStateFlow<String?>(null)
+    val userError: StateFlow<String?> = _userError.asStateFlow()
+
+    fun clearUserError() { _userError.value = null }
+
     /** Сообщение, на которое отвечаем (reply/quote). */
     private val _replyTo = MutableStateFlow<MessageEntity?>(null)
     val replyTo: StateFlow<MessageEntity?> = _replyTo.asStateFlow()
@@ -533,6 +538,13 @@ class ChatViewModel(
                     Log.e(TAG, "Cannot read file URI: $uri")
                     return@launch
                 }
+
+                if (bytes.size > MAX_FILE_SIZE) {
+                    val sizeMb = bytes.size / (1024 * 1024)
+                    _userError.value = "Файл слишком большой ($sizeMb МБ). Максимум ${MAX_FILE_SIZE / (1024 * 1024)} МБ."
+                    return@launch
+                }
+
                 val fileName = mediaFileManager.getFileName(uri) ?: "file"
                 val mimeType = mediaFileManager.getMimeType(uri)
                 val fileSize = bytes.size.toLong()
@@ -794,5 +806,6 @@ class ChatViewModel(
     companion object {
         private const val TAG = "ChatViewModel"
         private const val AUTO_SYNC_DELAY_MS = 5_000L // 5 секунд начальная задержка
+        private const val MAX_FILE_SIZE = 15 * 1024 * 1024 // 15 МБ (с запасом под шифрование + base64)
     }
 }
