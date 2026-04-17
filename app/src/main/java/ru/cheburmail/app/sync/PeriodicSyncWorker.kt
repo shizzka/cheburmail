@@ -11,21 +11,8 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import ru.cheburmail.app.crypto.CryptoProvider
 import ru.cheburmail.app.crypto.KeyPairGenerator
-import ru.cheburmail.app.crypto.MessageDecryptor
-import ru.cheburmail.app.crypto.MessageEncryptor
-import ru.cheburmail.app.crypto.NonceGenerator
-import ru.cheburmail.app.db.CheburMailDatabase
 import ru.cheburmail.app.repository.AccountRepository
 import ru.cheburmail.app.storage.SecureKeyStorage
-import ru.cheburmail.app.transport.EmailFormatter
-import ru.cheburmail.app.transport.EmailParser
-import ru.cheburmail.app.transport.ImapClient
-import ru.cheburmail.app.transport.ReceiveWorker
-import ru.cheburmail.app.transport.RetryStrategy
-import ru.cheburmail.app.transport.SendWorker
-import ru.cheburmail.app.transport.SmtpClient
-import ru.cheburmail.app.transport.TransportService
-import ru.cheburmail.app.messaging.KeyExchangeManager
 import ru.cheburmail.app.storage.AppSettings
 import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
@@ -54,60 +41,17 @@ class PeriodicSyncWorker(
             return Result.success()
         }
 
-        val db = CheburMailDatabase.getInstance(applicationContext)
         val ls = CryptoProvider.lazySodium
         val keyPairGenerator = KeyPairGenerator(ls)
         val keyStorage = SecureKeyStorage.create(applicationContext, keyPairGenerator)
         val keyPair = keyStorage.getOrCreateKeyPair()
+        val factory = SyncFactory(applicationContext)
 
         try {
-            // Получение входящих
-            val imapClient = ImapClient()
-            val emailParser = EmailParser()
-            val emailFormatter = EmailFormatter()
-            val smtpClient = SmtpClient()
-            val retryStrategy = RetryStrategy()
-            val nonceGenerator = NonceGenerator(ls)
-            val encryptor = MessageEncryptor(ls, nonceGenerator)
-            val decryptor = MessageDecryptor(ls)
-
-            val transportService = TransportService(
-                smtpClient = smtpClient,
-                imapClient = imapClient,
-                emailFormatter = emailFormatter,
-                emailParser = emailParser,
-                encryptor = encryptor,
-                decryptor = decryptor
-            )
-
-            val notifHelper = ru.cheburmail.app.notification.NotificationHelper(applicationContext)
-
-            val keyExchangeManager = KeyExchangeManager(
-                smtpClient = smtpClient,
-                contactDao = db.contactDao(),
-                keyStorage = keyStorage,
-                notificationHelper = notifHelper,
-                processedDao = db.processedKeyExchangeDao(),
-                imapClient = imapClient
-            )
-
-            val receiveWorker = ReceiveWorker(
-                transportService = transportService,
-                decryptor = decryptor,
-                retryStrategy = retryStrategy,
-                messageDao = db.messageDao(),
-                contactDao = db.contactDao(),
-                chatDao = db.chatDao(),
-                notificationHelper = notifHelper,
-                recipientPrivateKey = keyPair.getPrivateKey(),
-                keyExchangeManager = keyExchangeManager,
-                emailConfig = config,
-                controlMessageHandler = ru.cheburmail.app.group.ControlMessageHandler(
-                    chatDao = db.chatDao(),
-                    contactDao = db.contactDao(),
-                    selfEmail = config.email,
-                    keyStorage = keyStorage
-                )
+            val receiveWorker = factory.buildReceiveWorker(
+                config = config,
+                privateKey = keyPair.getPrivateKey(),
+                keyStorage = keyStorage
             )
 
             val received: Int
@@ -118,18 +62,7 @@ class PeriodicSyncWorker(
             }
             Log.i(TAG, "Получено $received новых сообщений")
 
-            // Отправка очереди
-            val sendWorker = SendWorker(
-                smtpClient = smtpClient,
-                emailFormatter = emailFormatter,
-                retryStrategy = retryStrategy,
-                sendQueueDao = db.sendQueueDao(),
-                messageDao = db.messageDao(),
-                contactDao = db.contactDao(),
-                emailConfig = config
-            )
-
-            sendWorker.processQueue()
+            factory.buildSendWorker(config).processQueue()
             Log.i(TAG, "Очередь отправки обработана")
 
             return Result.success()

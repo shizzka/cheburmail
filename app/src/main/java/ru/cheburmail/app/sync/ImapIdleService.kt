@@ -14,22 +14,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import ru.cheburmail.app.crypto.CryptoProvider
 import ru.cheburmail.app.crypto.KeyPairGenerator
-import ru.cheburmail.app.crypto.MessageDecryptor
-import ru.cheburmail.app.crypto.MessageEncryptor
-import ru.cheburmail.app.crypto.NonceGenerator
-import ru.cheburmail.app.db.CheburMailDatabase
 import ru.cheburmail.app.notification.NotificationHelper
 import ru.cheburmail.app.repository.AccountRepository
 import ru.cheburmail.app.storage.SecureKeyStorage
-import ru.cheburmail.app.transport.EmailConfig
-import ru.cheburmail.app.transport.EmailFormatter
-import ru.cheburmail.app.transport.EmailParser
-import ru.cheburmail.app.transport.ImapClient
-import ru.cheburmail.app.transport.ReceiveWorker
-import ru.cheburmail.app.transport.RetryStrategy
-import ru.cheburmail.app.transport.SmtpClient
-import ru.cheburmail.app.transport.TransportService
-import ru.cheburmail.app.messaging.KeyExchangeManager
 import java.util.Properties
 import javax.mail.Folder
 import javax.mail.Session
@@ -196,50 +183,15 @@ class ImapIdleService : Service() {
                 val accountRepo = AccountRepository.create(applicationContext)
                 val config = accountRepo.getActive() ?: return@launch
 
-                val db = CheburMailDatabase.getInstance(applicationContext)
                 val ls = CryptoProvider.lazySodium
                 val kpg = KeyPairGenerator(ls)
                 val keyStorage = SecureKeyStorage.create(applicationContext, kpg)
                 val keyPair = keyStorage.getOrCreateKeyPair()
 
-                val nonceGen = NonceGenerator(ls)
-                val transportService = TransportService(
-                    smtpClient = SmtpClient(),
-                    imapClient = ImapClient(),
-                    emailFormatter = EmailFormatter(),
-                    emailParser = EmailParser(),
-                    encryptor = MessageEncryptor(ls, nonceGen),
-                    decryptor = MessageDecryptor(ls)
-                )
-
-                val notifHelper = NotificationHelper(applicationContext)
-
-                val keyExchangeManager = KeyExchangeManager(
-                    smtpClient = SmtpClient(),
-                    contactDao = db.contactDao(),
-                    keyStorage = keyStorage,
-                    notificationHelper = notifHelper,
-                    processedDao = db.processedKeyExchangeDao(),
-                    imapClient = ImapClient()
-                )
-
-                val receiveWorker = ReceiveWorker(
-                    transportService = transportService,
-                    decryptor = MessageDecryptor(ls),
-                    retryStrategy = RetryStrategy(),
-                    messageDao = db.messageDao(),
-                    contactDao = db.contactDao(),
-                    chatDao = db.chatDao(),
-                    notificationHelper = notifHelper,
-                    recipientPrivateKey = keyPair.getPrivateKey(),
-                    keyExchangeManager = keyExchangeManager,
-                    emailConfig = config,
-                    controlMessageHandler = ru.cheburmail.app.group.ControlMessageHandler(
-                        chatDao = db.chatDao(),
-                        contactDao = db.contactDao(),
-                        selfEmail = config.email,
-                        keyStorage = keyStorage
-                    )
+                val receiveWorker = SyncFactory(applicationContext).buildReceiveWorker(
+                    config = config,
+                    privateKey = keyPair.getPrivateKey(),
+                    keyStorage = keyStorage
                 )
 
                 val received: Int
