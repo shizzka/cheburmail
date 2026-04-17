@@ -486,7 +486,8 @@ class ChatViewModel(
                             sendQueueDao = sendQueueDao,
                             encryptor = encryptor,
                             senderPrivateKey = keyPair.getPrivateKey(),
-                            senderEmail = myEmail
+                            senderEmail = myEmail,
+                            messageDao = messageDao
                         )
                         sender.sendToGroup(chatId, payload, msgId)
                         OutboxDrainWorker.enqueue(appContext)
