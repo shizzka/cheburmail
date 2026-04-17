@@ -242,7 +242,7 @@ fun AppNavigation(
                         // Добавляем создателя как участника через его контакт "я" —
                         // но у нас нет self-контакта; создатель определяется по myEmail
                         // на стороне получателя через members list в GROUP_INVITE
-                        val chatId = manager.createGroup(groupName, memberIds)
+                        val chatId = manager.createGroup(groupName, memberIds, creatorEmail = myEmail)
                         val keyPair = keyStorage.getOrCreateKeyPair()
                         manager.sendGroupInvite(
                             chatId = chatId,

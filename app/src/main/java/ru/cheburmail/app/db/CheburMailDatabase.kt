@@ -10,6 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import ru.cheburmail.app.db.dao.ChatDao
 import ru.cheburmail.app.db.dao.ContactDao
 import ru.cheburmail.app.db.dao.MessageDao
+import ru.cheburmail.app.db.dao.PendingAddRequestDao
 import ru.cheburmail.app.db.dao.ProcessedKeyExchangeDao
 import ru.cheburmail.app.db.dao.SendQueueDao
 import ru.cheburmail.app.db.entity.ChatEntity
@@ -17,6 +18,7 @@ import ru.cheburmail.app.db.entity.ChatMemberEntity
 import ru.cheburmail.app.db.entity.ContactEntity
 import ru.cheburmail.app.db.entity.MessageEntity
 import ru.cheburmail.app.db.entity.DeletedMessageEntity
+import ru.cheburmail.app.db.entity.PendingAddRequestEntity
 import ru.cheburmail.app.db.entity.ProcessedKeyExchangeEntity
 import ru.cheburmail.app.db.entity.SendQueueEntity
 
@@ -28,9 +30,10 @@ import ru.cheburmail.app.db.entity.SendQueueEntity
         MessageEntity::class,
         SendQueueEntity::class,
         DeletedMessageEntity::class,
-        ProcessedKeyExchangeEntity::class
+        ProcessedKeyExchangeEntity::class,
+        PendingAddRequestEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -41,9 +44,39 @@ abstract class CheburMailDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
     abstract fun sendQueueDao(): SendQueueDao
     abstract fun processedKeyExchangeDao(): ProcessedKeyExchangeDao
+    abstract fun pendingAddRequestDao(): PendingAddRequestDao
 
     companion object {
         private const val DB_NAME = "cheburmail.db"
+
+        /**
+         * v8: добавление колонки chats.created_by (admin email, NULL для старых
+         * групп и direct-чатов) и таблицы pending_add_requests для approval-флоу
+         * добавления участников verified-не-админами.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE chats ADD COLUMN created_by TEXT DEFAULT NULL")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS pending_add_requests (
+                        chat_id TEXT NOT NULL,
+                        target_email TEXT NOT NULL,
+                        requester_email TEXT NOT NULL,
+                        target_public_key BLOB NOT NULL,
+                        target_display_name TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        PRIMARY KEY(chat_id, target_email),
+                        FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS idx_pending_add_at " +
+                        "ON pending_add_requests(created_at)"
+                )
+            }
+        }
 
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -120,7 +153,8 @@ abstract class CheburMailDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
-                        MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7
+                        MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
+                        MIGRATION_7_8
                     )
                     .build().also { INSTANCE = it }
             }

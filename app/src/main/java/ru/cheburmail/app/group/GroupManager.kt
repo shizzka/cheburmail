@@ -27,10 +27,16 @@ class GroupManager(
      *
      * @param name название группы
      * @param memberContactIds ID контактов-участников (без создателя)
+     * @param creatorEmail email создателя (admin). Если null — старое поведение
+     *   без admin-роли (для бэк-совместимости тестов). В UI всегда передаём myEmail.
      * @return ID созданного чата
      * @throws IllegalArgumentException если участников больше MAX_GROUP_SIZE
      */
-    suspend fun createGroup(name: String, memberContactIds: List<Long>): String {
+    suspend fun createGroup(
+        name: String,
+        memberContactIds: List<Long>,
+        creatorEmail: String? = null
+    ): String {
         require(memberContactIds.size + 1 <= MAX_GROUP_SIZE) {
             "Максимум $MAX_GROUP_SIZE участников в группе"
         }
@@ -46,7 +52,8 @@ class GroupManager(
             type = ChatType.GROUP,
             title = name,
             createdAt = now,
-            updatedAt = now
+            updatedAt = now,
+            createdBy = creatorEmail
         )
         chatDao.insert(chat)
 
