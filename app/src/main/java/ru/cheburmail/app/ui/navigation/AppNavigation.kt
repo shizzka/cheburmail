@@ -162,7 +162,8 @@ fun AppNavigation(
                 sendQueueDao = database.sendQueueDao(),
                 keyStorage = keyStorage,
                 appContext = navController.context.applicationContext,
-                myEmail = myEmail
+                myEmail = myEmail,
+                pendingAddRequestDao = database.pendingAddRequestDao()
             )
             ChatScreen(
                 viewModel = chatViewModel,
@@ -187,15 +188,29 @@ fun AppNavigation(
                     sendQueueDao = database.sendQueueDao(),
                     keyStorage = keyStorage,
                     appContext = navController.context.applicationContext,
-                    myEmail = myEmail
+                    myEmail = myEmail,
+                    pendingAddRequestDao = database.pendingAddRequestDao()
                 )
             }
             val title by chatViewModel.chatTitle.collectAsState()
             val members by chatViewModel.groupMembers.collectAsState()
+            val isAdmin by chatViewModel.isAdmin.collectAsState()
+            val pending by chatViewModel.pendingAddRequests.collectAsState()
             ru.cheburmail.app.ui.chat.GroupInfoScreen(
                 groupName = title ?: "Группа",
                 members = members,
-                onAddMember = { /* TODO: выбор контакта для добавления */ },
+                isAdmin = isAdmin,
+                pendingRequests = pending,
+                loadAvailableContacts = { chatViewModel.availableContactsForAdd() },
+                onAddOrRequestMember = { contact ->
+                    chatViewModel.addOrRequestMember(contact.id)
+                },
+                onApproveRequest = { targetEmail ->
+                    chatViewModel.approveAddRequest(targetEmail)
+                },
+                onRejectRequest = { targetEmail ->
+                    chatViewModel.rejectAddRequest(targetEmail)
+                },
                 onRemoveMember = { contact ->
                     chatViewModel.removeGroupMember(contact.id)
                 },
