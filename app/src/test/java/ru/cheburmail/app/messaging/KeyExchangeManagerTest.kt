@@ -165,6 +165,35 @@ class KeyExchangeManagerTest {
     }
 
     @Test
+    fun `rate-limit persists across manager recreation`() = runBlocking {
+        val dao = FakeContactDao()
+        val smtp = CountingSmtpClient()
+        // Один и тот же store переживает «рестарт процесса».
+        val store = KeyexRateLimitStore.inMemory()
+
+        val manager1 = KeyExchangeManager(
+            smtpClient = smtp,
+            contactDao = dao,
+            keyStorage = FakeKeyStorage(localPublicKey),
+            rateLimitStore = store
+        )
+        manager1.sendKeyExchange(config, "target@example.com")
+        assertEquals(1, smtp.sendCount)
+
+        // Имитируем рестарт: новый менеджер, но тот же persistent store.
+        val manager2 = KeyExchangeManager(
+            smtpClient = smtp,
+            contactDao = dao,
+            keyStorage = FakeKeyStorage(localPublicKey),
+            rateLimitStore = store
+        )
+        manager2.sendKeyExchange(config, "target@example.com")
+
+        assertEquals("rate-limit должен пережить пересоздание менеджера",
+            1, smtp.sendCount)
+    }
+
+    @Test
     fun `envelope mismatch - json email differs from envelope - rejected`() = runBlocking {
         val dao = FakeContactDao()
         val smtp = CountingSmtpClient()

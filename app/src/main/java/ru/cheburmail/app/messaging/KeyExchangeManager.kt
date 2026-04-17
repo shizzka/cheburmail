@@ -43,14 +43,18 @@ class KeyExchangeManager(
     private val keyStorage: SecureKeyStorage,
     private val notificationHelper: NotificationHelper? = null,
     private val processedDao: ProcessedKeyExchangeDao? = null,
-    private val imapClient: ImapClient? = null
+    private val imapClient: ImapClient? = null,
+    /**
+     * Персистентное хранилище rate-limit. По умолчанию in-memory —
+     * после рестарта процесса rate-limit обнуляется.
+     * В проде подставляется [KeyexRateLimitStore.sharedPrefs], чтобы
+     * флуд-защита пережила перезапуск service'а.
+     */
+    private val rateLimitStore: KeyexRateLimitStore = KeyexRateLimitStore.inMemory()
 ) {
 
     /** Кэш в памяти — используется если нет [processedDao] (в тестах/старых воркерах). */
     private val processedKexUuids = ConcurrentHashMap<String, Long>()
-
-    /** Rate-limit: последний timestamp отправки keyex на адрес. */
-    private val lastSentToEmail = ConcurrentHashMap<String, Long>()
 
     /**
      * Отправить свой публичный ключ на указанный email.
@@ -58,7 +62,7 @@ class KeyExchangeManager(
      */
     suspend fun sendKeyExchange(config: EmailConfig, targetEmail: String) {
         val now = System.currentTimeMillis()
-        val last = lastSentToEmail[targetEmail]
+        val last = rateLimitStore.lastSent(targetEmail)
         if (last != null && now - last < SEND_RATE_LIMIT_MS) {
             Log.d(TAG, "Rate-limit: keyex to $targetEmail уже отправлен ${now - last}ms назад, пропускаем")
             return
@@ -85,7 +89,7 @@ class KeyExchangeManager(
         )
 
         smtpClient.send(config, emailMessage)
-        lastSentToEmail[targetEmail] = now
+        rateLimitStore.markSent(targetEmail, now)
         Log.i(TAG, "Key exchange отправлен -> $targetEmail")
     }
 

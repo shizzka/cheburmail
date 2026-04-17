@@ -9,6 +9,7 @@ import ru.cheburmail.app.db.CheburMailDatabase
 import ru.cheburmail.app.media.MediaDecryptor
 import ru.cheburmail.app.media.MediaFileManager
 import ru.cheburmail.app.messaging.KeyExchangeManager
+import ru.cheburmail.app.messaging.KeyexRateLimitStore
 import ru.cheburmail.app.notification.NotificationHelper
 import ru.cheburmail.app.storage.SecureKeyStorage
 import ru.cheburmail.app.transport.EmailConfig
@@ -74,7 +75,8 @@ class SyncFactory(private val context: Context) {
             keyStorage = keyStorage,
             notificationHelper = notifHelper,
             processedDao = db.processedKeyExchangeDao(),
-            imapClient = imapClient
+            imapClient = imapClient,
+            rateLimitStore = KeyexRateLimitStore.sharedPrefs(context)
         )
 
         val controlMessageHandler = ru.cheburmail.app.group.ControlMessageHandler(
