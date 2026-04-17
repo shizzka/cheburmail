@@ -24,7 +24,7 @@ interface MessageDao {
      * Сообщения чата, упорядоченные по времени (DESC) для reverseLayout LazyColumn.
      * Последние сообщения идут первыми — UI отображает их снизу.
      */
-    @Query("SELECT * FROM messages WHERE chat_id = :chatId ORDER BY timestamp DESC")
+    @Query("SELECT * FROM messages WHERE chat_id = :chatId AND id NOT LIKE 'ctrl-%' ORDER BY timestamp DESC")
     fun getForChat(chatId: String): Flow<List<MessageEntity>>
 
     @Query("UPDATE messages SET status = :status WHERE id = :messageId")
@@ -51,7 +51,7 @@ interface MessageDao {
     @Query("SELECT * FROM messages ORDER BY timestamp DESC")
     suspend fun getAllOnce(): List<MessageEntity>
 
-    @Query("SELECT * FROM messages WHERE chat_id = :chatId ORDER BY timestamp ASC")
+    @Query("SELECT * FROM messages WHERE chat_id = :chatId AND id NOT LIKE 'ctrl-%' ORDER BY timestamp ASC")
     suspend fun getForChatOnce(chatId: String): List<MessageEntity>
 
     /**

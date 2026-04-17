@@ -92,7 +92,9 @@ class ChatListViewModel(
                     val keyExchangeManager = KeyExchangeManager(
                         smtpClient = SmtpClient(),
                         contactDao = db.contactDao(),
-                        keyStorage = keyStorage
+                        keyStorage = keyStorage,
+                        processedDao = db.processedKeyExchangeDao(),
+                        imapClient = ImapClient()
                     )
 
                     val receiveWorker = ReceiveWorker(
@@ -105,7 +107,12 @@ class ChatListViewModel(
                         notificationHelper = NotificationHelper(ctx),
                         recipientPrivateKey = keyPair.getPrivateKey(),
                         keyExchangeManager = keyExchangeManager,
-                        emailConfig = config
+                        emailConfig = config,
+                        controlMessageHandler = ru.cheburmail.app.group.ControlMessageHandler(
+                            chatDao = db.chatDao(),
+                            contactDao = db.contactDao(),
+                            selfEmail = config.email
+                        )
                     )
 
                     val received = receiveWorker.pollAndProcess(config)

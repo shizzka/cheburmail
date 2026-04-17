@@ -1,5 +1,6 @@
 package ru.cheburmail.app.ui.chat
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,11 +33,15 @@ fun FileMessageBubble(
     message: MessageEntity,
     textColor: Color,
     onSaveFile: ((String) -> Unit)? = null,
+    onOpenFile: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier) {
         Row(
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = if (onOpenFile != null)
+                Modifier.clickable { onOpenFile(message.id) }
+            else Modifier
         ) {
             Icon(
                 imageVector = Icons.Filled.AttachFile,

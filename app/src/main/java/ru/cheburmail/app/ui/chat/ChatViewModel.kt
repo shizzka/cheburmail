@@ -52,6 +52,7 @@ import ru.cheburmail.app.transport.ReceiveWorker
 import ru.cheburmail.app.transport.RetryStrategy
 import ru.cheburmail.app.transport.SmtpClient
 import ru.cheburmail.app.transport.TransportService
+import ru.cheburmail.app.group.GroupMessageSender
 import ru.cheburmail.app.messaging.ChatIdGenerator
 import java.util.UUID
 
@@ -84,6 +85,12 @@ class ChatViewModel(
 
     private val _chatTitle = MutableStateFlow<String?>(null)
     val chatTitle: StateFlow<String?> = _chatTitle.asStateFlow()
+
+    private val _isGroup = MutableStateFlow(false)
+    val isGroup: StateFlow<Boolean> = _isGroup.asStateFlow()
+
+    private val _groupMembers = MutableStateFlow<List<ru.cheburmail.app.db.entity.ContactEntity>>(emptyList())
+    val groupMembers: StateFlow<List<ru.cheburmail.app.db.entity.ContactEntity>> = _groupMembers.asStateFlow()
 
     private val _inputText = MutableStateFlow("")
     val inputText: StateFlow<String> = _inputText.asStateFlow()
@@ -127,6 +134,10 @@ class ChatViewModel(
         viewModelScope.launch {
             val chat = chatDao.getById(chatId)
             _chatTitle.value = chat?.title ?: "Чат"
+            _isGroup.value = chat?.type == ChatType.GROUP
+            if (_isGroup.value) {
+                refreshGroupMembers()
+            }
             // Помечаем входящие как прочитанные
             messageDao.markChatAsRead(chatId)
         }
@@ -252,7 +263,9 @@ class ChatViewModel(
             val keyExchangeManager = ru.cheburmail.app.messaging.KeyExchangeManager(
                 smtpClient = SmtpClient(),
                 contactDao = db.contactDao(),
-                keyStorage = keyStorage
+                keyStorage = keyStorage,
+                processedDao = db.processedKeyExchangeDao(),
+                imapClient = ImapClient()
             )
             val mediaDecryptor = ru.cheburmail.app.media.MediaDecryptor(decryptor)
             val receiveWorker = ReceiveWorker(
@@ -267,7 +280,12 @@ class ChatViewModel(
                 keyExchangeManager = keyExchangeManager,
                 emailConfig = config,
                 mediaDecryptor = mediaDecryptor,
-                mediaFileManager = mediaFileManager
+                mediaFileManager = mediaFileManager,
+                controlMessageHandler = ru.cheburmail.app.group.ControlMessageHandler(
+                    chatDao = db.chatDao(),
+                    contactDao = db.contactDao(),
+                    selfEmail = config.email
+                )
             )
 
             val received = receiveWorker.pollAndProcess(config)
@@ -286,6 +304,44 @@ class ChatViewModel(
         viewModelScope.launch {
             val chat = chatDao.getById(chatId) ?: return@launch
             chatDao.update(chat.copy(title = title, updatedAt = System.currentTimeMillis()))
+        }
+    }
+
+    // ── Group ──────────────────────────────────────────────────────────
+
+    private suspend fun refreshGroupMembers() {
+        val members = chatDao.getMembersForChat(chatId)
+        val contacts = members.mapNotNull { contactDao.getById(it.contactId) }
+        _groupMembers.value = contacts
+    }
+
+    fun removeGroupMember(contactId: Long) {
+        viewModelScope.launch {
+            try {
+                val privateKey = keyStorage.getPrivateKey() ?: return@launch
+                val ls = CryptoProvider.lazySodium
+                val encryptor = MessageEncryptor(ls, NonceGenerator(ls))
+                val sender = GroupMessageSender(
+                    chatDao = chatDao,
+                    contactDao = contactDao,
+                    sendQueueDao = sendQueueDao,
+                    encryptor = encryptor,
+                    senderPrivateKey = privateKey,
+                    senderEmail = myEmail,
+                    messageDao = messageDao
+                )
+                val manager = ru.cheburmail.app.group.GroupManager(
+                    chatDao = chatDao,
+                    contactDao = contactDao,
+                    groupMessageSender = sender
+                )
+                manager.removeMember(chatId, contactId)
+                privateKey.fill(0)
+                refreshGroupMembers()
+            } catch (e: Exception) {
+                Log.e(TAG, "Ошибка удаления участника: ${e.message}")
+                _userError.value = "Не удалось удалить участника: ${e.message}"
+            }
         }
     }
 
@@ -408,7 +464,36 @@ class ChatViewModel(
                 )
                 messageDao.insert(message)
 
-                // Шифруем и ставим в очередь
+                val isGroup = existingChat?.type == ChatType.GROUP
+
+                // Payload с reply-метаданными
+                val payload = if (reply != null && replyText != null) {
+                    "REPLY:${reply.id}\n${replyText.take(100)}\n$text"
+                } else {
+                    text
+                }
+
+                if (isGroup) {
+                    // Групповая рассылка: fan-out по всем участникам
+                    withContext(Dispatchers.IO) {
+                        val keyPair = keyStorage.getOrCreateKeyPair()
+                        val ls = CryptoProvider.lazySodium
+                        val encryptor = MessageEncryptor(ls, NonceGenerator(ls))
+                        val sender = GroupMessageSender(
+                            chatDao = chatDao,
+                            contactDao = contactDao,
+                            sendQueueDao = sendQueueDao,
+                            encryptor = encryptor,
+                            senderPrivateKey = keyPair.getPrivateKey(),
+                            senderEmail = myEmail
+                        )
+                        sender.sendToGroup(chatId, payload, msgId)
+                        OutboxDrainWorker.enqueue(appContext)
+                    }
+                    return@launch
+                }
+
+                // Direct: шифруем и ставим в очередь
                 val email = recipientEmail
                 if (email == null) {
                     Log.e(TAG, "Recipient email not resolved for chat $chatId")
@@ -431,12 +516,6 @@ class ChatViewModel(
                     Log.d(TAG, "Encrypting for ${contact.email}, " +
                         "recipientPubKey=${java.util.Base64.getEncoder().encodeToString(contact.publicKey).take(16)}..., " +
                         "myPubKey=${java.util.Base64.getEncoder().encodeToString(keyPair.publicKey).take(16)}...")
-                    // Encode reply metadata into payload
-                    val payload = if (reply != null && replyText != null) {
-                        "REPLY:${reply.id}\n${replyText.take(100)}\n$text"
-                    } else {
-                        text
-                    }
                     val envelope = encryptor.encrypt(
                         message = payload.toByteArray(Charsets.UTF_8),
                         recipientPublicKey = contact.publicKey,
@@ -709,16 +788,62 @@ class ChatViewModel(
             try {
                 val message = withContext(Dispatchers.IO) { messageDao.getByIdOnce(messageId) }
                     ?: return@launch
-                val path = message.localMediaUri ?: return@launch
+                val path = message.localMediaUri ?: run {
+                    _userError.value = "Файл ещё не загружен"
+                    return@launch
+                }
                 val fileName = message.fileName ?: "file"
                 val mimeType = message.mimeType ?: "application/octet-stream"
-                withContext(Dispatchers.IO) {
+                val uri = withContext(Dispatchers.IO) {
                     val bytes = java.io.File(path).readBytes()
                     fileSaver.saveToDownloads(fileName, mimeType, bytes)
                 }
-                Log.d(TAG, "Saved file to downloads: $fileName")
+                if (uri != null) {
+                    Log.d(TAG, "Saved file to downloads: $fileName")
+                    _userError.value = "Сохранено в Загрузки/CheburMail/$fileName"
+                } else {
+                    _userError.value = "Не удалось сохранить файл"
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error saving file to downloads: ${e.message}")
+                _userError.value = "Ошибка сохранения: ${e.message}"
+            }
+        }
+    }
+
+    /** Открыть файл во внешнем приложении (видео-плеер, просмотрщик PDF и т.п.). */
+    fun openFileExternally(messageId: String) {
+        viewModelScope.launch {
+            try {
+                val message = withContext(Dispatchers.IO) { messageDao.getByIdOnce(messageId) }
+                    ?: return@launch
+                val path = message.localMediaUri ?: run {
+                    _userError.value = "Файл ещё не загружен"
+                    return@launch
+                }
+                val file = java.io.File(path)
+                if (!file.exists()) {
+                    _userError.value = "Файл не найден на устройстве"
+                    return@launch
+                }
+                val authority = "${appContext.packageName}.fileprovider"
+                val uri = androidx.core.content.FileProvider.getUriForFile(appContext, authority, file)
+                val mimeType = message.mimeType ?: "application/octet-stream"
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, mimeType)
+                    addFlags(
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    )
+                }
+                try {
+                    appContext.startActivity(intent)
+                } catch (e: android.content.ActivityNotFoundException) {
+                    _userError.value = "Нет приложения для открытия $mimeType"
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error opening file: ${e.message}")
+                _userError.value = "Не удалось открыть файл: ${e.message}"
             }
         }
     }

@@ -55,7 +55,7 @@ import ru.cheburmail.app.ui.contacts.ContactsViewModel
 @Composable
 fun CreateGroupScreen(
     contactsViewModel: ContactsViewModel,
-    onGroupCreated: (chatId: String) -> Unit,
+    onGroupCreated: (groupName: String, memberContactIds: List<Long>) -> Unit,
     onBack: () -> Unit
 ) {
     val contacts by contactsViewModel.contacts.collectAsState()
@@ -129,9 +129,7 @@ fun CreateGroupScreen(
 
             Button(
                 onClick = {
-                    // Создание группы будет обработано в ViewModel/навигации
-                    // Здесь передаём callback с данными
-                    onGroupCreated(groupName)
+                    onGroupCreated(groupName.trim(), selectedIds.toList())
                 },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = groupName.isNotBlank() && selectedIds.isNotEmpty()

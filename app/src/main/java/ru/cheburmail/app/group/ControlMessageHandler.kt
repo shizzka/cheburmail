@@ -22,7 +22,8 @@ import ru.cheburmail.app.db.entity.ContactEntity
  */
 class ControlMessageHandler(
     private val chatDao: ChatDao,
-    private val contactDao: ContactDao
+    private val contactDao: ContactDao,
+    private val selfEmail: String = ""
 ) {
 
     /**
@@ -127,10 +128,8 @@ class ControlMessageHandler(
             return
         }
 
-        // ChatDao не имеет deleteMember — удаление через пересоздание
-        // В текущей реализации: логируем, фактическое удаление
-        // потребует добавления deleteMember в ChatDao
-        Log.i(TAG, "MEMBER_REMOVED: $target из ${msg.chatId} (требуется deleteMember в ChatDao)")
+        chatDao.deleteMember(msg.chatId, contact.id)
+        Log.i(TAG, "MEMBER_REMOVED: $target удалён из ${msg.chatId}")
     }
 
     /**
@@ -142,6 +141,11 @@ class ControlMessageHandler(
         memberInfo: GroupMemberInfo,
         now: Long
     ) {
+        // Пропускаем себя — контакт для себя не создаётся, в chat_members нас нет
+        if (selfEmail.isNotEmpty() && memberInfo.email.equals(selfEmail, ignoreCase = true)) {
+            Log.d(TAG, "Пропускаем self (${memberInfo.email}) в members")
+            return
+        }
         var contact = contactDao.getByEmail(memberInfo.email)
         if (contact == null) {
             // Создать новый контакт из данных управляющего сообщения

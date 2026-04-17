@@ -19,6 +19,7 @@ import ru.cheburmail.app.ui.chat.ChatListScreen
 import ru.cheburmail.app.ui.chat.ChatListViewModel
 import ru.cheburmail.app.ui.chat.ChatScreen
 import ru.cheburmail.app.ui.chat.ChatViewModel
+import ru.cheburmail.app.ui.chat.CreateGroupScreen
 import ru.cheburmail.app.ui.chat.NewChatScreen
 import ru.cheburmail.app.ui.contacts.AddContactScreen
 import ru.cheburmail.app.ui.contacts.ContactDetailScreen
@@ -33,7 +34,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import ru.cheburmail.app.crypto.CryptoProvider
+import ru.cheburmail.app.crypto.MessageEncryptor
+import ru.cheburmail.app.crypto.NonceGenerator
+import ru.cheburmail.app.group.GroupManager
+import ru.cheburmail.app.group.GroupMessageSender
 import ru.cheburmail.app.messaging.ChatIdGenerator
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 /**
@@ -44,6 +52,8 @@ object Routes {
     const val CHAT_LIST = "chatList"
     const val CHAT = "chat/{chatId}"
     const val NEW_CHAT = "newChat"
+    const val CREATE_GROUP = "createGroup"
+    const val GROUP_INFO = "groupInfo/{chatId}"
     const val CONTACTS = "contacts"
     const val CONTACT_DETAIL = "contactDetail"
     const val ADD_CONTACT = "addContact"
@@ -51,6 +61,7 @@ object Routes {
     const val SETTINGS = "settings"
 
     fun chat(chatId: String) = "chat/$chatId"
+    fun groupInfo(chatId: String) = "groupInfo/$chatId"
 }
 
 /**
@@ -155,6 +166,39 @@ fun AppNavigation(
             )
             ChatScreen(
                 viewModel = chatViewModel,
+                onBack = { navController.popBackStack() },
+                onOpenGroupInfo = {
+                    navController.navigate(Routes.groupInfo(chatId))
+                }
+            )
+        }
+
+        composable(
+            route = Routes.GROUP_INFO,
+            arguments = listOf(navArgument("chatId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val chatId = backStackEntry.arguments?.getString("chatId") ?: return@composable
+            val chatViewModel = remember(chatId) {
+                ChatViewModel(
+                    chatId = chatId,
+                    messageDao = database.messageDao(),
+                    chatDao = database.chatDao(),
+                    contactDao = database.contactDao(),
+                    sendQueueDao = database.sendQueueDao(),
+                    keyStorage = keyStorage,
+                    appContext = navController.context.applicationContext,
+                    myEmail = myEmail
+                )
+            }
+            val title by chatViewModel.chatTitle.collectAsState()
+            val members by chatViewModel.groupMembers.collectAsState()
+            ru.cheburmail.app.ui.chat.GroupInfoScreen(
+                groupName = title ?: "Группа",
+                members = members,
+                onAddMember = { /* TODO: выбор контакта для добавления */ },
+                onRemoveMember = { contact ->
+                    chatViewModel.removeGroupMember(contact.id)
+                },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -164,6 +208,55 @@ fun AppNavigation(
                 contactsViewModel = contactsViewModel,
                 onContactSelected = { contact ->
                     handleNewChat(contact, myEmail, database, navController)
+                },
+                onCreateGroup = {
+                    navController.navigate(Routes.CREATE_GROUP)
+                },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        composable(Routes.CREATE_GROUP) {
+            val scope = rememberCoroutineScope()
+            CreateGroupScreen(
+                contactsViewModel = contactsViewModel,
+                onGroupCreated = { groupName, memberIds ->
+                    scope.launch {
+                        val privateKey = keyStorage.getPrivateKey() ?: return@launch
+                        val ls = CryptoProvider.lazySodium
+                        val encryptor = MessageEncryptor(ls, NonceGenerator(ls))
+                        val sender = GroupMessageSender(
+                            chatDao = database.chatDao(),
+                            contactDao = database.contactDao(),
+                            sendQueueDao = database.sendQueueDao(),
+                            encryptor = encryptor,
+                            senderPrivateKey = privateKey,
+                            senderEmail = myEmail,
+                            messageDao = database.messageDao()
+                        )
+                        val manager = GroupManager(
+                            chatDao = database.chatDao(),
+                            contactDao = database.contactDao(),
+                            groupMessageSender = sender
+                        )
+                        // Добавляем создателя как участника через его контакт "я" —
+                        // но у нас нет self-контакта; создатель определяется по myEmail
+                        // на стороне получателя через members list в GROUP_INVITE
+                        val chatId = manager.createGroup(groupName, memberIds)
+                        val keyPair = keyStorage.getOrCreateKeyPair()
+                        manager.sendGroupInvite(
+                            chatId = chatId,
+                            selfEmail = myEmail,
+                            selfPublicKey = keyPair.publicKey,
+                            selfDisplayName = myEmail.substringBefore('@')
+                        )
+                        ru.cheburmail.app.sync.OutboxDrainWorker.enqueue(appContext)
+                        privateKey.fill(0)
+
+                        navController.navigate(Routes.chat(chatId)) {
+                            popUpTo(Routes.CHAT_LIST)
+                        }
+                    }
                 },
                 onBack = { navController.popBackStack() }
             )

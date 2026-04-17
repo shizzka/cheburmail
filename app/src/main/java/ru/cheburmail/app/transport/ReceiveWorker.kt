@@ -98,6 +98,12 @@ class ReceiveWorker(
                     config = emailConfig,
                     kexUuid = kexUuid
                 )
+
+                // Удаляем keyex-письмо из IMAP, чтобы не перечитывать его на следующем poll.
+                // Без этого старые keyex с устаревшими ключами создают петлю "ключ изменился" → replay.
+                if (kexUuid != null && emailConfig != null) {
+                    keyExchangeManager?.deleteKeyExchangeEmail(emailConfig, kexUuid)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing key exchange from ${kexEmail.from}: ${e.message}")
             }
@@ -148,9 +154,13 @@ class ReceiveWorker(
                     continue
                 }
 
-                // Compute correct chatId from both emails (sorted pair)
-                // The sender may use an old single-email format — remap to canonical pair-based ID
-                val correctChatId = if (emailConfig != null) {
+                // Compute correct chatId:
+                // - Если в БД уже есть GROUP чат с msg.chatId — сохраняем как есть
+                // - Иначе канонический direct-pair (защита от старого single-email формата)
+                val existingGroupChat = chatDao?.getById(msg.chatId)
+                val correctChatId = if (existingGroupChat?.type == ChatType.GROUP) {
+                    msg.chatId
+                } else if (emailConfig != null) {
                     ChatIdGenerator.directChatId(emailConfig.email, contact.email)
                 } else {
                     msg.chatId
@@ -277,8 +287,11 @@ class ReceiveWorker(
                         continue
                     }
 
-                    // Compute correct chatId from both emails
-                    val correctMediaChatId = if (emailConfig != null) {
+                    // Compute correct chatId — preserve group chatId, иначе direct-pair
+                    val existingGroupChatForMedia = chatDao?.getById(mediaMsg.chatId)
+                    val correctMediaChatId = if (existingGroupChatForMedia?.type == ChatType.GROUP) {
+                        mediaMsg.chatId
+                    } else if (emailConfig != null) {
                         ChatIdGenerator.directChatId(emailConfig.email, contact.email)
                     } else {
                         mediaMsg.chatId

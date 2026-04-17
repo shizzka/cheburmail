@@ -81,10 +81,13 @@ import ru.cheburmail.app.db.entity.MessageEntity
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenGroupInfo: () -> Unit = {}
 ) {
     val messages by viewModel.messages.collectAsState()
     val chatTitle by viewModel.chatTitle.collectAsState()
+    val isGroup by viewModel.isGroup.collectAsState()
+    val groupMembers by viewModel.groupMembers.collectAsState()
     val inputText by viewModel.inputText.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
     val isRecordingVoice by viewModel.isRecordingVoice.collectAsState()
@@ -232,7 +235,23 @@ fun ChatScreen(
         snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(chatTitle ?: "Чат") },
+                title = {
+                    Column(
+                        modifier = if (isGroup) Modifier.combinedClickable(
+                            onClick = onOpenGroupInfo,
+                            onLongClick = {}
+                        ) else Modifier
+                    ) {
+                        Text(chatTitle ?: "Чат")
+                        if (isGroup) {
+                            Text(
+                                text = "${groupMembers.size} участников",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -291,6 +310,7 @@ fun ChatScreen(
                                 modifier = Modifier.padding(vertical = 4.dp),
                                 onImageClick = { path -> fullScreenImagePath = path },
                                 onSaveFile = viewModel::saveFileToDownloads,
+                                onOpenFile = viewModel::openFileExternally,
                                 voicePlayer = viewModel.voicePlayer
                             )
                         }

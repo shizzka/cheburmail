@@ -1,10 +1,12 @@
 package ru.cheburmail.app.update
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -18,8 +20,10 @@ import java.net.URL
 object UpdateChecker {
 
     private const val TAG = "UpdateChecker"
-    private const val GITHUB_API =
+    private const val GITHUB_API_LATEST =
         "https://api.github.com/repos/shizzka/cheburmail/releases/latest"
+    private const val GITHUB_API_LIST =
+        "https://api.github.com/repos/shizzka/cheburmail/releases?per_page=20"
     private const val PREFS_NAME = "update_checker"
     private const val KEY_LATEST_VERSION_CODE = "latest_version_code"
     private const val KEY_LATEST_VERSION_NAME = "latest_version_name"
@@ -42,7 +46,9 @@ object UpdateChecker {
      */
     suspend fun check(context: Context): UpdateInfo? = withContext(Dispatchers.IO) {
         try {
-            val connection = URL(GITHUB_API).openConnection() as HttpURLConnection
+            val isDebug = isDebugBuild(context)
+            val apiUrl = if (isDebug) GITHUB_API_LIST else GITHUB_API_LATEST
+            val connection = URL(apiUrl).openConnection() as HttpURLConnection
             connection.setRequestProperty("Accept", "application/vnd.github+json")
             connection.connectTimeout = 10_000
             connection.readTimeout = 10_000
@@ -53,14 +59,25 @@ object UpdateChecker {
             }
 
             val body = connection.inputStream.bufferedReader().readText()
-            val json = JSONObject(body)
+            // Debug — ищем последний prerelease в списке; release — используем /releases/latest.
+            val json: JSONObject = if (isDebug) {
+                val arr = JSONArray(body)
+                var picked: JSONObject? = null
+                for (i in 0 until arr.length()) {
+                    val r = arr.getJSONObject(i)
+                    if (r.optBoolean("prerelease", false)) { picked = r; break }
+                }
+                picked ?: return@withContext null.also { Log.i(TAG, "No prerelease found") }
+            } else {
+                JSONObject(body)
+            }
 
-            val tagName = json.getString("tag_name") // "v3"
+            val tagName = json.getString("tag_name") // "v3" или "v3-debug"
             val versionName = json.optString("name", tagName) // "0.2.0"
             val htmlUrl = json.getString("html_url")
 
-            // Парсим versionCode из tag: "v3" → 3
-            val remoteVersionCode = tagName.removePrefix("v").toIntOrNull()
+            // Парсим versionCode из tag: "v3" → 3, "v3-debug" → 3
+            val remoteVersionCode = tagName.removePrefix("v").substringBefore('-').toIntOrNull()
             if (remoteVersionCode == null) {
                 Log.w(TAG, "Cannot parse versionCode from tag: $tagName")
                 return@withContext null
@@ -128,6 +145,10 @@ object UpdateChecker {
             .edit()
             .putInt(KEY_DISMISSED_VERSION, versionCode)
             .apply()
+    }
+
+    private fun isDebugBuild(context: Context): Boolean {
+        return (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     }
 
     private fun getCurrentVersionCode(context: Context): Int {

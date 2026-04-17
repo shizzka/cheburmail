@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -40,6 +41,7 @@ import ru.cheburmail.app.ui.contacts.ContactsViewModel
 fun NewChatScreen(
     contactsViewModel: ContactsViewModel,
     onContactSelected: (ContactEntity) -> Unit,
+    onCreateGroup: () -> Unit = {},
     onBack: () -> Unit
 ) {
     val contacts by contactsViewModel.contacts.collectAsState()
@@ -92,6 +94,28 @@ fun NewChatScreen(
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onCreateGroup() }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Group,
+                            contentDescription = null,
+                            modifier = Modifier.size(40.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "Новая группа",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+                    HorizontalDivider()
+                }
                 items(contacts, key = { it.id }) { contact ->
                     Row(
                         modifier = Modifier

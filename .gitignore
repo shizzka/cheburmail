@@ -40,3 +40,8 @@ CLAUDE.md
 .planning/autopilot.lock
 .planning/logs/
 .planning/checkpoints/
+
+# Tooling artifacts (MemPalace, claude-flow)
+.claude-flow/
+entities.json
+mempalace.yaml

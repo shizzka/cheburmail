@@ -69,9 +69,20 @@ class GroupManager(
      * Каждый участник получает зашифрованное управляющее сообщение
      * со списком всех участников и их публичных ключей.
      *
+     * Создатель (self) включается в список members, чтобы получатели
+     * могли добавить его в chat_members и отправлять ему сообщения.
+     *
      * @param chatId ID группового чата
+     * @param selfEmail email создателя группы
+     * @param selfPublicKey 32-байтный публичный ключ создателя
+     * @param selfDisplayName отображаемое имя создателя (для UI получателей)
      */
-    suspend fun sendGroupInvite(chatId: String) {
+    suspend fun sendGroupInvite(
+        chatId: String,
+        selfEmail: String,
+        selfPublicKey: ByteArray,
+        selfDisplayName: String
+    ) {
         val chat = chatDao.getById(chatId)
             ?: throw IllegalArgumentException("Чат $chatId не найден")
 
@@ -83,7 +94,11 @@ class GroupManager(
                 publicKey = java.util.Base64.getEncoder().encodeToString(contact.publicKey),
                 displayName = contact.displayName
             )
-        }
+        } + GroupMemberInfo(
+            email = selfEmail,
+            publicKey = java.util.Base64.getEncoder().encodeToString(selfPublicKey),
+            displayName = selfDisplayName
+        )
 
         val controlMsg = ControlMessage(
             type = ControlMessageType.GROUP_INVITE,
@@ -93,7 +108,7 @@ class GroupManager(
         )
 
         groupMessageSender.sendControlToGroup(chatId, controlMsg)
-        Log.i(TAG, "GROUP_INVITE отправлен: chatId=$chatId")
+        Log.i(TAG, "GROUP_INVITE отправлен: chatId=$chatId, участников (с self)=${memberInfos.size}")
     }
 
     /**
@@ -185,8 +200,12 @@ class GroupManager(
             targetEmail = contact.email
         )
 
-        // Отправить уведомление оставшимся участникам
+        // Отправить уведомление ВСЕМ текущим участникам (включая удаляемого),
+        // чтобы удалённый тоже узнал о выходе из группы.
         groupMessageSender.sendControlToGroup(chatId, controlMsg)
+
+        // Удалить локально
+        chatDao.deleteMember(chatId, contactId)
         Log.i(TAG, "Участник ${contact.email} удалён из группы $chatId")
     }
 

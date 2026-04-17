@@ -85,7 +85,9 @@ class SyncReceiver : BroadcastReceiver() {
             smtpClient = SmtpClient(),
             contactDao = db.contactDao(),
             keyStorage = keyStorage,
-            notificationHelper = notifHelper
+            notificationHelper = notifHelper,
+            processedDao = db.processedKeyExchangeDao(),
+            imapClient = imapClient
         )
 
         val receiveWorker = ReceiveWorker(
@@ -98,7 +100,12 @@ class SyncReceiver : BroadcastReceiver() {
             notificationHelper = notifHelper,
             recipientPrivateKey = keyPair.getPrivateKey(),
             keyExchangeManager = keyExchangeManager,
-            emailConfig = config
+            emailConfig = config,
+            controlMessageHandler = ru.cheburmail.app.group.ControlMessageHandler(
+                chatDao = db.chatDao(),
+                contactDao = db.contactDao(),
+                selfEmail = config.email
+            )
         )
 
         val received: Int

@@ -4,10 +4,13 @@ import android.util.Log
 import ru.cheburmail.app.crypto.FingerprintGenerator
 import ru.cheburmail.app.db.TrustStatus
 import ru.cheburmail.app.db.dao.ContactDao
+import ru.cheburmail.app.db.dao.ProcessedKeyExchangeDao
 import ru.cheburmail.app.db.entity.ContactEntity
+import ru.cheburmail.app.db.entity.ProcessedKeyExchangeEntity
 import ru.cheburmail.app.storage.SecureKeyStorage
 import ru.cheburmail.app.transport.EmailConfig
 import ru.cheburmail.app.transport.EmailMessage
+import ru.cheburmail.app.transport.ImapClient
 import ru.cheburmail.app.transport.SmtpClient
 import ru.cheburmail.app.transport.TransportException
 import ru.cheburmail.app.notification.NotificationHelper
@@ -28,25 +31,39 @@ import java.util.concurrent.ConcurrentHashMap
  * 2. User B получает → создаёт контакт (UNVERIFIED) → автоматически отправляет свой ключ назад
  * 3. User A получает ответ → создаёт контакт (UNVERIFIED) → чат готов
  *
- * Безопасность:
+ * Безопасность и анти-бомбинг:
  * - VERIFIED контакты: смена ключа НЕ принимается автоматически (защита от MITM)
- * - UNVERIFIED контакты: ключ обновляется, но показывается предупреждение
- * - Дедупликация по UUID key exchange сообщений (защита от replay)
+ * - UNVERIFIED контакты: ключ обновляется молча, ответный keyex НЕ шлётся (защита от петли)
+ * - Персистентный дедуп по UUID через Room (защита от replay и перечитывания IMAP)
+ * - Rate-limit: один keyex на адрес не чаще раза в [SEND_RATE_LIMIT_MS]
  */
 class KeyExchangeManager(
     private val smtpClient: SmtpClient,
     private val contactDao: ContactDao,
     private val keyStorage: SecureKeyStorage,
-    private val notificationHelper: NotificationHelper? = null
+    private val notificationHelper: NotificationHelper? = null,
+    private val processedDao: ProcessedKeyExchangeDao? = null,
+    private val imapClient: ImapClient? = null
 ) {
 
-    /** Кэш обработанных UUID key exchange для защиты от replay-атак */
+    /** Кэш в памяти — используется если нет [processedDao] (в тестах/старых воркерах). */
     private val processedKexUuids = ConcurrentHashMap<String, Long>()
+
+    /** Rate-limit: последний timestamp отправки keyex на адрес. */
+    private val lastSentToEmail = ConcurrentHashMap<String, Long>()
 
     /**
      * Отправить свой публичный ключ на указанный email.
+     * Повторные вызовы в пределах [SEND_RATE_LIMIT_MS] на один и тот же адрес игнорируются.
      */
     suspend fun sendKeyExchange(config: EmailConfig, targetEmail: String) {
+        val now = System.currentTimeMillis()
+        val last = lastSentToEmail[targetEmail]
+        if (last != null && now - last < SEND_RATE_LIMIT_MS) {
+            Log.d(TAG, "Rate-limit: keyex to $targetEmail уже отправлен ${now - last}ms назад, пропускаем")
+            return
+        }
+
         val publicKey = keyStorage.getPublicKey()
             ?: throw IllegalStateException("Публичный ключ не найден")
 
@@ -68,20 +85,24 @@ class KeyExchangeManager(
         )
 
         smtpClient.send(config, emailMessage)
-        Log.i(TAG, "Key exchange отправлен")
+        lastSentToEmail[targetEmail] = now
+        Log.i(TAG, "Key exchange отправлен -> $targetEmail")
     }
 
     /**
      * Обработать входящее key exchange сообщение.
-     * Создаёт контакт и отправляет свой ключ назад (если контакта ещё нет).
      *
-     * Безопасность:
-     * - Для VERIFIED контактов ключ НЕ обновляется автоматически. Пользователь должен
-     *   вручную нажать «Обновить ключ» и заново верифицировать контакт.
-     * - Для UNVERIFIED контактов ключ обновляется, но показывается уведомление.
-     * - UUID дедупликация предотвращает повторную обработку.
+     * Поведение:
+     * - Уже обработанный UUID (по persistent-дедупу) → skip.
+     * - Новый контакт → создаём, отправляем наш ключ назад (однократно, с rate-limit).
+     * - Существующий контакт, ключ совпал → ничего.
+     * - Существующий VERIFIED, ключ изменился → ОТКЛОНЯЕМ, уведомляем.
+     * - Существующий UNVERIFIED, ключ изменился → обновляем МОЛЧА, БЕЗ ответного keyex
+     *   (так мы разрываем петлю, когда у партнёра в IMAP лежат старые keyex с разными ключами).
+     * - В любом случае возвращаем пометку, обработали ли UUID, чтобы вызывающий мог
+     *   удалить письмо из IMAP и не перечитывать его снова.
      *
-     * @return true если контакт создан, false если уже существовал или ключ отклонён
+     * @return true если контакт создан/обновлён, false если skip/отклонено
      */
     suspend fun handleKeyExchange(
         body: ByteArray,
@@ -90,15 +111,10 @@ class KeyExchangeManager(
         kexUuid: String? = null
     ): Boolean {
         try {
-            // Дедупликация по UUID — защита от replay-атак
-            if (kexUuid != null) {
-                val now = System.currentTimeMillis()
-                if (processedKexUuids.putIfAbsent(kexUuid, now) != null) {
-                    Log.d(TAG, "Key exchange $kexUuid уже обработан, пропускаем")
-                    return false
-                }
-                // Чистим старые записи (>24ч) чтобы не накапливались
-                processedKexUuids.entries.removeAll { now - it.value > KEX_DEDUP_TTL_MS }
+            // Дедупликация по UUID (персистентная если есть DAO, иначе in-memory)
+            if (kexUuid != null && isAlreadyProcessed(kexUuid)) {
+                Log.d(TAG, "Key exchange $kexUuid уже обработан, пропускаем")
+                return false
             }
 
             val jsonStr = String(body, Charsets.UTF_8)
@@ -112,33 +128,32 @@ class KeyExchangeManager(
 
             if (publicKey.size != 32) {
                 Log.e(TAG, "Невалидный публичный ключ от $senderEmail: длина ${publicKey.size}")
+                markProcessed(kexUuid)
                 return false
             }
 
-            // Получаем локальный ключ для fingerprint
             val localKey = keyStorage.getPublicKey()
                 ?: throw IllegalStateException("Локальный ключ не найден")
 
             val fingerprint = FingerprintGenerator.generateHex(localKey, publicKey)
 
-            // Проверяем, не добавлен ли уже
             val existing = contactDao.getByEmail(senderEmail)
             if (existing != null) {
-                // Ключ не изменился — ничего не делаем
                 if (existing.publicKey.contentEquals(publicKey)) {
                     Log.d(TAG, "Контакт $senderEmail уже существует, ключ не изменился")
+                    markProcessed(kexUuid)
                     return false
                 }
 
-                // Ключ изменился! Поведение зависит от статуса верификации
                 if (existing.trustStatus == TrustStatus.VERIFIED) {
-                    // VERIFIED контакт: НЕ обновляем ключ автоматически (защита от MITM)
-                    Log.w(TAG, "ОТКЛОНЕНО: смена ключа VERIFIED контакта. Требуется ручное обновление.")
+                    Log.w(TAG, "ОТКЛОНЕНО: смена ключа VERIFIED контакта $senderEmail. Требуется ручное обновление.")
                     notificationHelper?.showKeyChangeWarning(senderEmail, wasVerified = true)
+                    markProcessed(kexUuid)
                     return false
                 }
 
-                // UNVERIFIED контакт: обновляем ключ, показываем предупреждение
+                // UNVERIFIED + ключ изменился: обновляем молча, БЕЗ ответного keyex.
+                // Ответный keyex здесь — главный источник петли при мусорных keyex в IMAP партнёра.
                 val updated = existing.copy(
                     publicKey = publicKey,
                     fingerprint = fingerprint,
@@ -146,20 +161,13 @@ class KeyExchangeManager(
                     updatedAt = System.currentTimeMillis()
                 )
                 contactDao.update(updated)
-                Log.i(TAG, "Публичный ключ контакта обновлён (UNVERIFIED)")
+                Log.i(TAG, "Публичный ключ контакта $senderEmail обновлён (UNVERIFIED), ответный keyex не шлём")
                 notificationHelper?.showKeyChangeWarning(senderEmail, wasVerified = false)
-
-                // Отправляем свой ключ назад — собеседник переустановил и ему нужен наш ключ
-                if (config != null) {
-                    try {
-                        sendKeyExchange(config, senderEmail)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Не удалось отправить ответный key exchange: ${e.message}")
-                    }
-                }
-                return false
+                markProcessed(kexUuid)
+                return true
             }
 
+            // Новый контакт
             val now = System.currentTimeMillis()
             val contact = ContactEntity(
                 email = senderEmail,
@@ -172,30 +180,73 @@ class KeyExchangeManager(
             )
 
             contactDao.insert(contact)
-            Log.i(TAG, "Контакт добавлен через key exchange (UNVERIFIED)")
+            Log.i(TAG, "Контакт $senderEmail добавлен через key exchange (UNVERIFIED)")
 
-            // Отправляем свой ключ назад
+            // Отправляем свой ключ назад (с rate-limit внутри sendKeyExchange)
             if (config != null) {
                 try {
                     sendKeyExchange(config, senderEmail)
-                    Log.i(TAG, "Ответный key exchange отправлен")
+                    Log.i(TAG, "Ответный key exchange отправлен -> $senderEmail")
                 } catch (e: Exception) {
                     Log.w(TAG, "Не удалось отправить ответный key exchange: ${e.message}")
-                    // Контакт уже создан — это не критично
                 }
             }
 
+            markProcessed(kexUuid)
             return true
 
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка обработки key exchange от $fromEmail: ${e.message}")
+            // Помечаем UUID обработанным чтобы не крутиться на одном и том же испорченном письме.
+            markProcessed(kexUuid)
             return false
+        }
+    }
+
+    /**
+     * Удалить keyex-письмо с указанным UUID из IMAP.
+     * Вызывается из ReceiveWorker после обработки, чтобы не накапливались сотни keyex-писем.
+     */
+    fun deleteKeyExchangeEmail(config: EmailConfig, kexUuid: String) {
+        val imap = imapClient ?: return
+        try {
+            // deleteFromImap ищет подстроку в subject; "kex-<uuid>" уникально идентифицирует keyex-письмо.
+            imap.deleteFromImap(config, "$KEX_PREFIX$kexUuid")
+        } catch (e: Exception) {
+            Log.w(TAG, "Не удалось удалить keyex $kexUuid из IMAP: ${e.message}")
+        }
+    }
+
+    private suspend fun isAlreadyProcessed(kexUuid: String): Boolean {
+        val dao = processedDao
+        if (dao != null) {
+            return dao.exists(kexUuid)
+        }
+        val now = System.currentTimeMillis()
+        if (processedKexUuids.putIfAbsent(kexUuid, now) != null) {
+            return true
+        }
+        processedKexUuids.entries.removeAll { now - it.value > KEX_DEDUP_TTL_MS }
+        return false
+    }
+
+    private suspend fun markProcessed(kexUuid: String?) {
+        if (kexUuid == null) return
+        val dao = processedDao ?: return
+        try {
+            dao.insert(ProcessedKeyExchangeEntity(kexUuid = kexUuid))
+            // Ленивый GC старых записей (>24ч)
+            dao.deleteOlderThan(System.currentTimeMillis() - KEX_DEDUP_TTL_MS)
+        } catch (e: Exception) {
+            Log.w(TAG, "Не удалось сохранить processed keyex $kexUuid: ${e.message}")
         }
     }
 
     companion object {
         private const val TAG = "KeyExchangeManager"
         private const val KEX_DEDUP_TTL_MS = 24 * 60 * 60 * 1000L // 24 часа
+        /** Минимальный интервал между отправками keyex на один email. */
+        private const val SEND_RATE_LIMIT_MS = 60 * 1000L // 1 минута
         const val KEX_PREFIX = "kex-"
         const val KEYEX_CHAT_ID = "KEYEX"
         const val KEYEX_CONTENT_TYPE = "application/x-cheburmail-keyex"

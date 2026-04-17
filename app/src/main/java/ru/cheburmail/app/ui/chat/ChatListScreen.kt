@@ -59,6 +59,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import ru.cheburmail.app.db.ChatType
 import ru.cheburmail.app.db.ChatWithLastMessage
 import ru.cheburmail.app.update.UpdateChecker
 import java.text.SimpleDateFormat
@@ -165,7 +172,7 @@ fun ChatListScreen(
                     versionName = update.latestVersionName,
                     onGitHub = {
                         context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse(UpdateChecker.GITHUB_RELEASES_URL))
+                            Intent(Intent.ACTION_VIEW, Uri.parse(update.downloadUrl))
                         )
                     },
                     onBot = {
@@ -180,86 +187,110 @@ fun ChatListScreen(
                 )
             }
 
-            PullToRefreshBox(
-                isRefreshing = isRefreshing,
-                onRefresh = viewModel::refresh,
+            val directChats = chats.filter { it.chatType != ChatType.GROUP }
+            val groupChats = chats.filter { it.chatType == ChatType.GROUP }
+
+            val pagerState = rememberPagerState(pageCount = { 2 })
+            val coroutineScope = rememberCoroutineScope()
+
+            TabRow(selectedTabIndex = pagerState.currentPage) {
+                Tab(
+                    selected = pagerState.currentPage == 0,
+                    onClick = { coroutineScope.launch { pagerState.animateScrollToPage(0) } },
+                    text = { Text("Личные (${directChats.size})") }
+                )
+                Tab(
+                    selected = pagerState.currentPage == 1,
+                    onClick = { coroutineScope.launch { pagerState.animateScrollToPage(1) } },
+                    text = { Text("Группы (${groupChats.size})") }
+                )
+            }
+
+            HorizontalPager(
+                state = pagerState,
                 modifier = Modifier.fillMaxSize()
-            ) {
-            if (chats.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState()),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Chat,
-                            contentDescription = null,
-                            modifier = Modifier.size(64.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = "Нет чатов",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = "Добавьте контакт и начните переписку",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
+            ) { page ->
+                val pageChats = if (page == 0) directChats else groupChats
+                val emptyHint = if (page == 0)
+                    "Добавьте контакт и начните переписку"
+                else
+                    "Создайте группу — кнопка «+»"
+
+                PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = viewModel::refresh,
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(chats, key = { it.chatId }) { chat ->
-                        val dismissState = rememberSwipeToDismissBoxState(
-                            confirmValueChange = { value ->
-                                if (value == SwipeToDismissBoxValue.EndToStart) {
-                                    chatToDelete = chat
-                                    false
-                                } else {
-                                    false
-                                }
-                            }
-                        )
-
-                        SwipeToDismissBox(
-                            state = dismissState,
-                            backgroundContent = {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(MaterialTheme.colorScheme.errorContainer)
-                                        .padding(horizontal = 20.dp),
-                                    contentAlignment = Alignment.CenterEnd
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Удалить",
-                                        tint = MaterialTheme.colorScheme.onErrorContainer
-                                    )
-                                }
-                            },
-                            enableDismissFromStartToEnd = false
+                    if (pageChats.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState()),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Column {
-                                ChatRow(
-                                    chat = chat,
-                                    onClick = { onChatClick(chat.chatId) }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.Chat,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(64.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                HorizontalDivider()
+                                Text(
+                                    text = if (page == 0) "Нет личных чатов" else "Нет групп",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = emptyHint,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    } else {
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(pageChats, key = { it.chatId }) { chat ->
+                                val dismissState = rememberSwipeToDismissBoxState(
+                                    confirmValueChange = { value ->
+                                        if (value == SwipeToDismissBoxValue.EndToStart) {
+                                            chatToDelete = chat
+                                            false
+                                        } else false
+                                    }
+                                )
+
+                                SwipeToDismissBox(
+                                    state = dismissState,
+                                    backgroundContent = {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(MaterialTheme.colorScheme.errorContainer)
+                                                .padding(horizontal = 20.dp),
+                                            contentAlignment = Alignment.CenterEnd
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Удалить",
+                                                tint = MaterialTheme.colorScheme.onErrorContainer
+                                            )
+                                        }
+                                    },
+                                    enableDismissFromStartToEnd = false
+                                ) {
+                                    Column {
+                                        ChatRow(
+                                            chat = chat,
+                                            onClick = { onChatClick(chat.chatId) }
+                                        )
+                                        HorizontalDivider()
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-        }
         } // Column
     }
 }

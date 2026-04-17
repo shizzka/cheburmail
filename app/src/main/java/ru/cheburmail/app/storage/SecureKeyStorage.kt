@@ -15,7 +15,7 @@ import ru.cheburmail.app.storage.model.StoredKeyData
  * Keys are persisted in an encrypted DataStore (Tink AEAD + Android Keystore).
  * Thread-safe: DataStore serializes all writes internally.
  */
-class SecureKeyStorage(
+open class SecureKeyStorage(
     private val dataStore: DataStore<StoredKeyData?>,
     private val keyPairGenerator: KeyPairGenerator
 ) {
@@ -53,7 +53,7 @@ class SecureKeyStorage(
     /**
      * Returns the stored public key, or null if no key pair exists.
      */
-    suspend fun getPublicKey(): ByteArray? {
+    open suspend fun getPublicKey(): ByteArray? {
         return dataStore.data.first()?.publicKey?.copyOf()
     }
 

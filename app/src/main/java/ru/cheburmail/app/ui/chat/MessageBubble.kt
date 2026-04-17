@@ -39,6 +39,7 @@ fun MessageBubble(
     modifier: Modifier = Modifier,
     onImageClick: (String) -> Unit = {},
     onSaveFile: (String) -> Unit = {},
+    onOpenFile: (String) -> Unit = {},
     voicePlayer: VoicePlayer? = null
 ) {
     // Делегируем медиа-типы в специализированные composable
@@ -119,7 +120,8 @@ fun MessageBubble(
                         FileMessageBubble(
                             message = message,
                             textColor = textColor,
-                            onSaveFile = onSaveFile
+                            onSaveFile = onSaveFile,
+                            onOpenFile = onOpenFile
                         )
                     }
 

@@ -2,9 +2,12 @@ package ru.cheburmail.app.group
 
 import android.util.Log
 import ru.cheburmail.app.crypto.MessageEncryptor
+import ru.cheburmail.app.db.MessageStatus
 import ru.cheburmail.app.db.dao.ChatDao
 import ru.cheburmail.app.db.dao.ContactDao
+import ru.cheburmail.app.db.dao.MessageDao
 import ru.cheburmail.app.db.dao.SendQueueDao
+import ru.cheburmail.app.db.entity.MessageEntity
 import ru.cheburmail.app.db.entity.SendQueueEntity
 import java.util.UUID
 
@@ -24,7 +27,8 @@ class GroupMessageSender(
     private val sendQueueDao: SendQueueDao,
     private val encryptor: MessageEncryptor,
     private val senderPrivateKey: ByteArray,
-    private val senderEmail: String
+    private val senderEmail: String,
+    private val messageDao: MessageDao? = null
 ) {
 
     /**
@@ -96,6 +100,18 @@ class GroupMessageSender(
      */
     suspend fun sendControlToGroup(chatId: String, controlMessage: ControlMessage): Int {
         val controlUuid = "${ControlMessage.CTRL_PREFIX}${UUID.randomUUID()}"
+        // Плейсхолдер MessageEntity нужен из-за FK send_queue.message_id → messages.id.
+        // Скрывается из UI фильтром `id NOT LIKE 'ctrl-%'` в MessageDao.
+        messageDao?.insert(
+            MessageEntity(
+                id = controlUuid,
+                chatId = chatId,
+                isOutgoing = true,
+                plaintext = "",
+                status = MessageStatus.SENDING,
+                timestamp = System.currentTimeMillis()
+            )
+        )
         return sendToGroup(chatId, controlMessage.toJson(), controlUuid)
     }
 
