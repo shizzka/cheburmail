@@ -217,7 +217,8 @@ class KeyExchangeManager(
     fun deleteKeyExchangeEmail(config: EmailConfig, kexUuid: String) {
         val imap = imapClient ?: return
         try {
-            // deleteFromImap ищет подстроку в subject; "kex-<uuid>" уникально идентифицирует keyex-письмо.
+            // deleteFromImap matches by whole slash-separated segment; "kex-<uuid>"
+            // is one full segment of subject "CM/1/KEYEX/kex-<uuid>", no substring collisions.
             imap.deleteFromImap(config, "$KEX_PREFIX$kexUuid")
         } catch (e: Exception) {
             Log.w(TAG, "Не удалось удалить keyex $kexUuid из IMAP: ${e.message}")

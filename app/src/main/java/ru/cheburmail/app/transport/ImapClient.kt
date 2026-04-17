@@ -349,7 +349,15 @@ open class ImapClient {
     }
 
     /**
-     * Delete messages from CheburMail IMAP folder whose subject contains [msgUuid].
+     * Delete messages from CheburMail IMAP folder whose subject contains [msgUuid]
+     * as a whole slash-separated segment (not substring).
+     *
+     * Example: msgUuid="kex-aaa" matches subject "CM/1/KEYEX/kex-aaa"
+     * but NOT "CM/1/KEYEX/kex-aaaZZZ".
+     *
+     * Subjects are of the form "CM/1/.../<id>" or "CM/1/.../<id>/M" (media),
+     * so segment-level matching is exact enough without requiring the full subject.
+     *
      * Also checks INBOX. Expunges after marking DELETED.
      */
     fun deleteFromImap(config: EmailConfig, msgUuid: String) {
@@ -367,7 +375,7 @@ open class ImapClient {
                     val msgs = folder.getMessages(total - scanCount + 1, total)
                     for (msg in msgs) {
                         val subj = msg.subject ?: continue
-                        if (subj.contains(msgUuid)) {
+                        if (subjectMatchesId(subj, msgUuid)) {
                             msg.setFlag(Flags.Flag.DELETED, true)
                             Log.d(TAG, "Marked DELETED in $folderName: $subj")
                         }
@@ -392,5 +400,15 @@ open class ImapClient {
         private const val MAX_MESSAGE_SIZE = 50 * 1024 * 1024 // 50MB
         /** Prevents parallel IMAP fetches from multiple callers. */
         private val FETCH_LOCK = ReentrantLock()
+
+        /**
+         * Match a CheburMail subject against an identifier (msgUuid/kex-uuid).
+         * Matches only if the identifier is a complete slash-separated segment —
+         * no substring collisions (e.g. "msg-abc" must not match "msg-abcdef").
+         */
+        fun subjectMatchesId(subject: String, id: String): Boolean {
+            if (!subject.startsWith(EmailMessage.SUBJECT_PREFIX)) return false
+            return subject.split('/').any { it == id }
+        }
     }
 }
