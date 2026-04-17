@@ -122,6 +122,14 @@ class ControlMessageHandler(
             return
         }
 
+        // Если кикнули меня — удалить чат локально, чтобы не слать в пустоту.
+        // FK CASCADE уберёт chat_members и messages.
+        if (selfEmail.isNotEmpty() && target.equals(selfEmail, ignoreCase = true)) {
+            chatDao.deleteById(msg.chatId)
+            Log.i(TAG, "MEMBER_REMOVED: меня ($selfEmail) удалили из ${msg.chatId} → чат удалён локально")
+            return
+        }
+
         val contact = contactDao.getByEmail(target)
         if (contact == null) {
             Log.w(TAG, "Контакт $target не найден для удаления из группы")
