@@ -15,6 +15,7 @@ import ru.cheburmail.app.db.entity.ContactEntity
 import ru.cheburmail.app.storage.SecureKeyStorage
 import ru.cheburmail.app.transport.EmailConfig
 import ru.cheburmail.app.transport.EmailMessage
+import ru.cheburmail.app.transport.EmailProvider
 import ru.cheburmail.app.transport.SmtpClient
 
 /**
@@ -36,11 +37,7 @@ class KeyExchangeManagerTest {
     private val config = EmailConfig(
         email = "me@example.com",
         password = "pw",
-        imapHost = "imap",
-        imapPort = 993,
-        smtpHost = "smtp",
-        smtpPort = 587,
-        useTls = true
+        provider = EmailProvider.YANDEX
     )
 
     @Test
@@ -339,12 +336,12 @@ class KeyExchangeManagerTest {
         override suspend fun getPublicKey(): ByteArray = key
     }
 
-    private class FakeDataStore : androidx.datastore.core.DataStore<ru.cheburmail.app.storage.StoredKeyData?> {
-        override val data: Flow<ru.cheburmail.app.storage.StoredKeyData?>
+    private class FakeDataStore : androidx.datastore.core.DataStore<ru.cheburmail.app.storage.model.StoredKeyData?> {
+        override val data: Flow<ru.cheburmail.app.storage.model.StoredKeyData?>
             get() = kotlinx.coroutines.flow.flowOf(null)
         override suspend fun updateData(
-            transform: suspend (ru.cheburmail.app.storage.StoredKeyData?) -> ru.cheburmail.app.storage.StoredKeyData?
-        ): ru.cheburmail.app.storage.StoredKeyData? = null
+            transform: suspend (ru.cheburmail.app.storage.model.StoredKeyData?) -> ru.cheburmail.app.storage.model.StoredKeyData?
+        ): ru.cheburmail.app.storage.model.StoredKeyData? = null
     }
 
     private class FakeKeyPairGenerator : ru.cheburmail.app.crypto.KeyPairGenerator(

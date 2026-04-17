@@ -35,7 +35,8 @@ class EmailRoundTripFormatTest {
 
     @Test
     fun formatThenParse_variousEnvelopeSizes() {
-        val sizes = listOf(1, 16, 1024, 65536)
+        // Minimum realistic ciphertext = MAC_BYTES + 1 = 17 (XSalsa20-Poly1305 always adds the MAC).
+        val sizes = listOf(17, 64, 1024, 65536)
 
         for (size in sizes) {
             val chatId = "chat-size-$size"

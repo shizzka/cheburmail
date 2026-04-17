@@ -49,7 +49,7 @@ class EmailCleanupWorkerTest {
         // Все аккаунты вернут 0 (нет IMAP-подключения)
         val configs = listOf(
             EmailConfig("a@yandex.ru", "pass", EmailProvider.YANDEX),
-            EmailConfig("b@mail.ru", "pass", EmailProvider.MAIL_RU)
+            EmailConfig("b@mail.ru", "pass", EmailProvider.MAILRU)
         )
         val result = worker.cleanupAll(configs)
         assertEquals(0, result)

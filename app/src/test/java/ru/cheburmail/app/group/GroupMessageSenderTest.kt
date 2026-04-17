@@ -183,7 +183,8 @@ class GroupMessageSenderTest {
             items.add(item)
             return items.size.toLong()
         }
-        override suspend fun getQueued() = items.filter { it.status == QueueStatus.QUEUED }
+        override suspend fun getQueued(now: Long) = items.filter { it.status == QueueStatus.QUEUED }
+        override suspend fun getAll(): List<SendQueueEntity> = items.toList()
         override suspend fun getByMessageId(messageId: String) = items.filter { it.messageId == messageId }
         override suspend fun updateStatus(id: Long, status: QueueStatus, retryCount: Int?, nextRetryAt: Long?, updatedAt: Long) {}
         override suspend fun getRetryable(now: Long) = emptyList<SendQueueEntity>()
@@ -199,19 +200,23 @@ class GroupMessageSenderTest {
         override fun cryptoBoxOpenEasy(m: ByteArray, c: ByteArray, cLen: Long, n: ByteArray, pk: ByteArray, sk: ByteArray) = true
         override fun cryptoBoxKeypair(pk: ByteArray, sk: ByteArray) = true
         override fun cryptoBoxSeedKeypair(pk: ByteArray, sk: ByteArray, seed: ByteArray) = true
-        override fun cryptoBoxBeforenm(k: ByteArray, pk: ByteArray, sk: ByteArray) = true
-        override fun cryptoBoxEasyAfternm(c: ByteArray, m: ByteArray, mLen: Long, n: ByteArray, k: ByteArray) = true
-        override fun cryptoBoxOpenEasyAfternm(m: ByteArray, c: ByteArray, cLen: Long, n: ByteArray, k: ByteArray) = true
+        override fun cryptoBoxDetached(c: ByteArray, mac: ByteArray, m: ByteArray, mLen: Long, n: ByteArray, pk: ByteArray, sk: ByteArray) = true
+        override fun cryptoBoxOpenDetached(m: ByteArray, c: ByteArray, mac: ByteArray, cLen: Long, n: ByteArray, pk: ByteArray, sk: ByteArray) = true
+        override fun cryptoBoxBeforeNm(k: ByteArray, pk: ByteArray, sk: ByteArray) = true
+        override fun cryptoBoxEasyAfterNm(c: ByteArray, m: ByteArray, mLen: Long, n: ByteArray, k: ByteArray) = true
+        override fun cryptoBoxOpenEasyAfterNm(m: ByteArray, c: ByteArray, cLen: Long, n: ByteArray, k: ByteArray) = true
+        override fun cryptoBoxDetachedAfterNm(c: ByteArray, mac: ByteArray, m: ByteArray, mLen: Long, n: ByteArray, k: ByteArray) = true
+        override fun cryptoBoxOpenDetachedAfterNm(m: ByteArray, c: ByteArray, mac: ByteArray, cLen: Long, n: ByteArray, k: ByteArray) = true
         override fun cryptoBoxSeal(c: ByteArray, m: ByteArray, mLen: Long, pk: ByteArray) = true
         override fun cryptoBoxSealOpen(m: ByteArray, c: ByteArray, cLen: Long, pk: ByteArray, sk: ByteArray) = true
     }
 
     private class FakeRandomNative : com.goterl.lazysodium.interfaces.Random {
-        override fun randomBytesRandom(): Int = 42
+        override fun randomBytesRandom(): Long = 42L
         override fun randomBytesBuf(size: Int): ByteArray = ByteArray(size) { 0x42 }
-        override fun randomBytesBuf(buf: ByteArray, size: Int) { buf.fill(0x42) }
-        override fun randomBytesUniform(upperBound: Int): Int = 0
-        override fun randomBytesDeterministic(buf: ByteArray, size: Int, seed: ByteArray) {}
+        override fun randomBytesUniform(upperBound: Int): Long = 0L
+        override fun randomBytesDeterministic(size: Int, seed: ByteArray): ByteArray = ByteArray(size)
+        override fun nonce(size: Int): ByteArray = ByteArray(size) { 0x11 }
     }
 
     private class FakeEncryptor : ru.cheburmail.app.crypto.MessageEncryptor(

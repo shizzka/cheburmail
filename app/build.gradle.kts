@@ -162,6 +162,12 @@ dependencies {
     // Test
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)
+    // libsodium for JVM unit tests (native binary bundled in jar).
+    // 5.1.1 built for Java 8+, later versions require Java 21.
+    testImplementation("com.goterl:lazysodium-java:5.1.1")
+    testImplementation("net.java.dev.jna:jna:5.18.1")
+    // org.json is bundled-but-stubbed in android.jar; need real impl for JVM unit tests
+    testImplementation("org.json:json:20231013")
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.test.core)
     androidTestImplementation(libs.test.runner)
