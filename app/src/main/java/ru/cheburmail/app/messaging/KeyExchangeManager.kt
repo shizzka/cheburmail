@@ -108,7 +108,8 @@ class KeyExchangeManager(
         body: ByteArray,
         fromEmail: String,
         config: EmailConfig?,
-        kexUuid: String? = null
+        kexUuid: String? = null,
+        messageTimestamp: Long? = null
     ): Boolean {
         try {
             // Дедупликация по UUID (персистентная если есть DAO, иначе in-memory)
@@ -155,6 +156,15 @@ class KeyExchangeManager(
                 if (existing.trustStatus == TrustStatus.VERIFIED) {
                     Log.w(TAG, "ОТКЛОНЕНО: смена ключа VERIFIED контакта $senderEmail. Требуется ручное обновление.")
                     notificationHelper?.showKeyChangeWarning(senderEmail, wasVerified = true)
+                    markProcessed(kexUuid)
+                    return false
+                }
+
+                // Race guard: IMAP может вернуть устаревший keyex позже свежего.
+                // Если timestamp письма старее, чем updatedAt текущего контакта — игнорируем,
+                // иначе старый ключ перезатрёт актуальный и связь порвётся.
+                if (messageTimestamp != null && messageTimestamp < existing.updatedAt) {
+                    Log.w(TAG, "keyex stale: $senderEmail ts=$messageTimestamp < updatedAt=${existing.updatedAt} — игнорируем")
                     markProcessed(kexUuid)
                     return false
                 }

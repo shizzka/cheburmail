@@ -6,7 +6,9 @@ data class EmailMessage(
     val subject: String,
     val body: ByteArray,
     val contentType: String = CHEBURMAIL_CONTENT_TYPE,
-    val attachment: ByteArray? = null
+    val attachment: ByteArray? = null,
+    /** Время отправки/получения (epoch ms), извлекается из IMAP. `null` если недоступно. */
+    val sentDate: Long? = null
 ) {
     companion object {
         const val CHEBURMAIL_CONTENT_TYPE = "application/x-cheburmail"
@@ -24,6 +26,7 @@ data class EmailMessage(
             subject == other.subject &&
             body.contentEquals(other.body) &&
             contentType == other.contentType &&
+            sentDate == other.sentDate &&
             (attachment == null && other.attachment == null ||
                 attachment != null && other.attachment != null && attachment.contentEquals(other.attachment))
     }
@@ -35,6 +38,7 @@ data class EmailMessage(
         result = 31 * result + body.contentHashCode()
         result = 31 * result + contentType.hashCode()
         result = 31 * result + (attachment?.contentHashCode() ?: 0)
+        result = 31 * result + (sentDate?.hashCode() ?: 0)
         return result
     }
 }

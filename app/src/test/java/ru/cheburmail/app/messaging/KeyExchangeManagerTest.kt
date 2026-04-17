@@ -188,6 +188,78 @@ class KeyExchangeManagerTest {
     }
 
     @Test
+    fun `stale keyex - older timestamp than contact updatedAt - ignored`() = runBlocking {
+        val dao = FakeContactDao()
+        val now = 10_000L
+        dao.insert(
+            ContactEntity(
+                email = "sender@example.com",
+                displayName = "Sender",
+                publicKey = remotePublicKeyV2,  // актуальный ключ V2
+                fingerprint = "fp-new",
+                trustStatus = TrustStatus.UNVERIFIED,
+                createdAt = 1L,
+                updatedAt = now
+            )
+        )
+        val smtp = CountingSmtpClient()
+        val manager = KeyExchangeManager(
+            smtpClient = smtp,
+            contactDao = dao,
+            keyStorage = FakeKeyStorage(localPublicKey)
+        )
+
+        // Приходит старый keyex с V1 — timestamp раньше чем updatedAt контакта
+        manager.handleKeyExchange(
+            keyExBody("sender@example.com", remotePublicKeyV1),
+            fromEmail = "sender@example.com",
+            config = config,
+            kexUuid = "uuid-stale",
+            messageTimestamp = now - 5_000L
+        )
+
+        val stored = dao.getByEmail("sender@example.com")!!
+        assertTrue("актуальный ключ V2 не должен быть перезатёрт устаревшим keyex",
+            stored.publicKey.contentEquals(remotePublicKeyV2))
+        assertEquals(0, smtp.sendCount)
+    }
+
+    @Test
+    fun `fresh keyex - newer timestamp than contact updatedAt - applied`() = runBlocking {
+        val dao = FakeContactDao()
+        val old = 1_000L
+        dao.insert(
+            ContactEntity(
+                email = "sender@example.com",
+                displayName = "Sender",
+                publicKey = remotePublicKeyV1,
+                fingerprint = "fp-old",
+                trustStatus = TrustStatus.UNVERIFIED,
+                createdAt = 1L,
+                updatedAt = old
+            )
+        )
+        val smtp = CountingSmtpClient()
+        val manager = KeyExchangeManager(
+            smtpClient = smtp,
+            contactDao = dao,
+            keyStorage = FakeKeyStorage(localPublicKey)
+        )
+
+        manager.handleKeyExchange(
+            keyExBody("sender@example.com", remotePublicKeyV2),
+            fromEmail = "sender@example.com",
+            config = config,
+            kexUuid = "uuid-fresh",
+            messageTimestamp = old + 5_000L
+        )
+
+        val stored = dao.getByEmail("sender@example.com")!!
+        assertTrue("свежий keyex должен обновить ключ",
+            stored.publicKey.contentEquals(remotePublicKeyV2))
+    }
+
+    @Test
     fun `existing contact with same key - no-op, no reply`() = runBlocking {
         val dao = FakeContactDao()
         dao.insert(

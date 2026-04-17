@@ -113,6 +113,9 @@ open class ImapClient {
                             EmailMessage.CHEBURMAIL_CONTENT_TYPE
                         }
                         val attachmentBytes = if (isMedia) extractAttachment(msg) else null
+                        // sentDate из IMAP — нужен для устранения race-конфликтов при keyex,
+                        // когда два письма с одного email приходят в неправильном порядке.
+                        val sentDateMs = msg.sentDate?.time ?: msg.receivedDate?.time
 
                         result.add(
                             EmailMessage(
@@ -121,7 +124,8 @@ open class ImapClient {
                                 subject = subject,
                                 body = bodyBytes,
                                 contentType = contentType,
-                                attachment = attachmentBytes
+                                attachment = attachmentBytes,
+                                sentDate = sentDateMs
                             )
                         )
                     } catch (e: Exception) {
