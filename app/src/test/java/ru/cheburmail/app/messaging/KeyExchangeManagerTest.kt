@@ -165,6 +165,29 @@ class KeyExchangeManagerTest {
     }
 
     @Test
+    fun `envelope mismatch - json email differs from envelope - rejected`() = runBlocking {
+        val dao = FakeContactDao()
+        val smtp = CountingSmtpClient()
+        val manager = KeyExchangeManager(
+            smtpClient = smtp,
+            contactDao = dao,
+            keyStorage = FakeKeyStorage(localPublicKey)
+        )
+
+        // envelope From = attacker@evil.com, но в JSON подделано legit@example.com
+        manager.handleKeyExchange(
+            keyExBody("legit@example.com", remotePublicKeyV1),
+            fromEmail = "attacker@evil.com",
+            config = config,
+            kexUuid = "uuid-mitm"
+        )
+
+        assertEquals("MITM: ответный keyex не должен отправляться", 0, smtp.sendCount)
+        assertNull("MITM: контакт не должен создаваться", dao.getByEmail("legit@example.com"))
+        assertNull("MITM: атакующий тоже не получает контакт", dao.getByEmail("attacker@evil.com"))
+    }
+
+    @Test
     fun `existing contact with same key - no-op, no reply`() = runBlocking {
         val dao = FakeContactDao()
         dao.insert(

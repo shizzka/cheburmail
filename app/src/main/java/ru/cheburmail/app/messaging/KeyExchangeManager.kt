@@ -121,6 +121,13 @@ class KeyExchangeManager(
             val json = JSONObject(jsonStr)
 
             val senderEmail = json.getString("email")
+            // Защита от MITM: email из JSON-тела должен совпадать с envelope From.
+            // Иначе атакующий с доступом к SMTP может подменить ключ для чужого адреса.
+            if (!senderEmail.equals(fromEmail, ignoreCase = true)) {
+                Log.w(TAG, "keyex envelope/json email mismatch: envelope=$fromEmail json=$senderEmail — отклонено")
+                markProcessed(kexUuid)
+                return false
+            }
             val publicKeyBase64 = json.getString("publicKey")
             val displayName = json.optString("displayName", senderEmail.substringBefore('@'))
 
