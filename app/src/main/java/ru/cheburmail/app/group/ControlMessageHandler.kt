@@ -42,6 +42,14 @@ class ControlMessageHandler(
                 ControlMessageType.GROUP_INVITE -> handleGroupInvite(controlMsg)
                 ControlMessageType.MEMBER_ADDED -> handleMemberAdded(controlMsg)
                 ControlMessageType.MEMBER_REMOVED -> handleMemberRemoved(controlMsg)
+                ControlMessageType.MEMBER_ADD_REQUEST,
+                ControlMessageType.MEMBER_ADD_APPROVED,
+                ControlMessageType.MEMBER_ADD_REJECTED -> {
+                    // Реальная обработка появится в Step 5 после рефакторинга
+                    // handle(plaintext, fromEmail) — без fromEmail невозможна
+                    // безопасная проверка admin/verified.
+                    Log.w(TAG, "${controlMsg.type} получен, но обработка не подключена (Step 5)")
+                }
             }
             true
         } catch (e: Exception) {
