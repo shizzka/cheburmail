@@ -115,6 +115,73 @@ open class GroupMessageSender(
         return sendToGroup(chatId, controlMessage.toJson(), controlUuid)
     }
 
+    /**
+     * Отправить управляющее сообщение **одному** получателю (point-to-point).
+     *
+     * Используется для approval-флоу: MEMBER_ADD_REQUEST от не-админа к
+     * админу и MEMBER_ADD_APPROVED/REJECTED от админа к автору запроса.
+     * В отличие от sendControlToGroup ничего не fan-out'ит — только адресату.
+     *
+     * @param chatId ID группового чата (нужен для FK на messages)
+     * @param recipientEmail email получателя (admin или requester)
+     * @param controlMessage управляющее сообщение
+     * @return true если в очередь добавлен 1 элемент, false если контакт
+     *   не найден / не удалось зашифровать / получатель = self
+     */
+    open suspend fun sendControlToAdmin(
+        chatId: String,
+        recipientEmail: String,
+        controlMessage: ControlMessage
+    ): Boolean {
+        if (recipientEmail.equals(senderEmail, ignoreCase = true)) {
+            Log.w(TAG, "sendControlToAdmin: получатель == self ($senderEmail), пропускаем")
+            return false
+        }
+
+        val recipient = contactDao.getByEmail(recipientEmail)
+        if (recipient == null) {
+            Log.e(TAG, "sendControlToAdmin: контакт $recipientEmail не найден, не отправляем")
+            return false
+        }
+
+        val controlUuid = "${ControlMessage.CTRL_PREFIX}${UUID.randomUUID()}"
+        // FK send_queue.message_id → messages.id (CASCADE) — нужен placeholder,
+        // как и в sendControlToGroup. Скрывается из UI фильтром `id NOT LIKE 'ctrl-%'`.
+        val now = System.currentTimeMillis()
+        messageDao.insert(
+            MessageEntity(
+                id = controlUuid,
+                chatId = chatId,
+                isOutgoing = true,
+                plaintext = "",
+                status = MessageStatus.SENDING,
+                timestamp = now
+            )
+        )
+
+        return try {
+            val envelope = encryptor.encrypt(
+                controlMessage.toBytes(),
+                recipient.publicKey,
+                senderPrivateKey
+            )
+            sendQueueDao.insert(
+                SendQueueEntity(
+                    messageId = controlUuid,
+                    recipientEmail = recipient.email,
+                    encryptedPayload = envelope.toBytes(),
+                    createdAt = now,
+                    updatedAt = now
+                )
+            )
+            Log.i(TAG, "P2P-управление отправлено: type=${controlMessage.type} to=${recipient.email} chatId=$chatId")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "sendControlToAdmin: ошибка шифрования для ${recipient.email}: ${e.message}")
+            false
+        }
+    }
+
     companion object {
         private const val TAG = "GroupMessageSender"
         const val QUEUE_DEPTH_WARNING = 50
