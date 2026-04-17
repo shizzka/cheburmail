@@ -104,7 +104,8 @@ class SyncReceiver : BroadcastReceiver() {
             controlMessageHandler = ru.cheburmail.app.group.ControlMessageHandler(
                 chatDao = db.chatDao(),
                 contactDao = db.contactDao(),
-                selfEmail = config.email
+                selfEmail = config.email,
+                keyStorage = keyStorage
             )
         )
 
