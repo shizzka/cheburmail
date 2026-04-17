@@ -146,8 +146,15 @@ class GroupManagerTest {
         }
         override suspend fun getMembersForChat(chatId: String): List<ChatMemberEntity> =
             members.filter { it.chatId == chatId }
+        override suspend fun deleteMember(chatId: String, contactId: Long) {
+            members.removeAll { it.chatId == chatId && it.contactId == contactId }
+        }
         override suspend fun update(chat: ChatEntity) { chats[chat.id] = chat }
         override suspend fun delete(chat: ChatEntity) { chats.remove(chat.id) }
+        override suspend fun deleteById(chatId: String) {
+            chats.remove(chatId)
+            members.removeAll { it.chatId == chatId }
+        }
     }
 
     private class FakeContactDao : ru.cheburmail.app.db.dao.ContactDao {
@@ -161,6 +168,7 @@ class GroupManagerTest {
         override suspend fun getByEmail(email: String): ContactEntity? =
             contacts.values.find { it.email == email }
         override fun getAll() = flowOf(contacts.values.toList())
+        override suspend fun getAllOnce(): List<ContactEntity> = contacts.values.toList()
         override suspend fun update(contact: ContactEntity) { contacts[contact.id] = contact }
         override suspend fun delete(contact: ContactEntity) { contacts.remove(contact.id) }
         override suspend fun deleteById(id: Long) { contacts.remove(id) }
@@ -172,7 +180,8 @@ class GroupManagerTest {
         sendQueueDao = FakeSendQueueDao(),
         encryptor = FakeEncryptor(),
         senderPrivateKey = ByteArray(32),
-        senderEmail = "me@yandex.ru"
+        senderEmail = "me@yandex.ru",
+        messageDao = FakeMessageDao()
     ) {
         val sentControlMessages = mutableListOf<Pair<String, ControlMessage>>()
 
@@ -184,7 +193,8 @@ class GroupManagerTest {
 
     private class FakeSendQueueDao : ru.cheburmail.app.db.dao.SendQueueDao {
         override suspend fun insert(item: ru.cheburmail.app.db.entity.SendQueueEntity): Long = 0
-        override suspend fun getQueued(): List<ru.cheburmail.app.db.entity.SendQueueEntity> = emptyList()
+        override suspend fun getQueued(now: Long): List<ru.cheburmail.app.db.entity.SendQueueEntity> = emptyList()
+        override suspend fun getAll(): List<ru.cheburmail.app.db.entity.SendQueueEntity> = emptyList()
         override suspend fun getByMessageId(messageId: String) = emptyList<ru.cheburmail.app.db.entity.SendQueueEntity>()
         override suspend fun updateStatus(id: Long, status: ru.cheburmail.app.db.QueueStatus, retryCount: Int?, nextRetryAt: Long?, updatedAt: Long) {}
         override suspend fun getRetryable(now: Long) = emptyList<ru.cheburmail.app.db.entity.SendQueueEntity>()
@@ -192,24 +202,51 @@ class GroupManagerTest {
         override suspend fun countPending(): Int = 0
     }
 
+    private class FakeMessageDao : ru.cheburmail.app.db.dao.MessageDao {
+        override suspend fun insert(message: ru.cheburmail.app.db.entity.MessageEntity) {}
+        override suspend fun getById(id: String) = null
+        override fun getForChat(chatId: String) = flowOf(emptyList<ru.cheburmail.app.db.entity.MessageEntity>())
+        override suspend fun updateStatus(messageId: String, status: ru.cheburmail.app.db.MessageStatus) {}
+        override suspend fun getByIdOnce(id: String) = null
+        override suspend fun deleteExpired(now: Long) = 0
+        override suspend fun existsById(id: String) = false
+        override suspend fun getAllOnce() = emptyList<ru.cheburmail.app.db.entity.MessageEntity>()
+        override suspend fun getForChatOnce(chatId: String) = emptyList<ru.cheburmail.app.db.entity.MessageEntity>()
+        override suspend fun markChatAsRead(chatId: String) {}
+        override suspend fun deleteByChatId(chatId: String) {}
+        override suspend fun deleteById(messageId: String) {}
+        override suspend fun updateMedia(
+            messageId: String,
+            localUri: String?,
+            thumbnailUri: String?,
+            downloadStatus: ru.cheburmail.app.db.MediaDownloadStatus
+        ) {}
+        override suspend fun insertDeleted(d: ru.cheburmail.app.db.entity.DeletedMessageEntity) {}
+        override suspend fun isDeleted(messageId: String) = false
+    }
+
     private class FakeBoxNative : com.goterl.lazysodium.interfaces.Box.Native {
         override fun cryptoBoxEasy(c: ByteArray, m: ByteArray, mLen: Long, n: ByteArray, pk: ByteArray, sk: ByteArray) = true
         override fun cryptoBoxOpenEasy(m: ByteArray, c: ByteArray, cLen: Long, n: ByteArray, pk: ByteArray, sk: ByteArray) = true
         override fun cryptoBoxKeypair(pk: ByteArray, sk: ByteArray) = true
         override fun cryptoBoxSeedKeypair(pk: ByteArray, sk: ByteArray, seed: ByteArray) = true
-        override fun cryptoBoxBeforenm(k: ByteArray, pk: ByteArray, sk: ByteArray) = true
-        override fun cryptoBoxEasyAfternm(c: ByteArray, m: ByteArray, mLen: Long, n: ByteArray, k: ByteArray) = true
-        override fun cryptoBoxOpenEasyAfternm(m: ByteArray, c: ByteArray, cLen: Long, n: ByteArray, k: ByteArray) = true
+        override fun cryptoBoxDetached(c: ByteArray, mac: ByteArray, m: ByteArray, mLen: Long, n: ByteArray, pk: ByteArray, sk: ByteArray) = true
+        override fun cryptoBoxOpenDetached(m: ByteArray, c: ByteArray, mac: ByteArray, cLen: Long, n: ByteArray, pk: ByteArray, sk: ByteArray) = true
+        override fun cryptoBoxBeforeNm(k: ByteArray, pk: ByteArray, sk: ByteArray) = true
+        override fun cryptoBoxEasyAfterNm(c: ByteArray, m: ByteArray, mLen: Long, n: ByteArray, k: ByteArray) = true
+        override fun cryptoBoxOpenEasyAfterNm(m: ByteArray, c: ByteArray, cLen: Long, n: ByteArray, k: ByteArray) = true
+        override fun cryptoBoxDetachedAfterNm(c: ByteArray, mac: ByteArray, m: ByteArray, mLen: Long, n: ByteArray, k: ByteArray) = true
+        override fun cryptoBoxOpenDetachedAfterNm(m: ByteArray, c: ByteArray, mac: ByteArray, cLen: Long, n: ByteArray, k: ByteArray) = true
         override fun cryptoBoxSeal(c: ByteArray, m: ByteArray, mLen: Long, pk: ByteArray) = true
         override fun cryptoBoxSealOpen(m: ByteArray, c: ByteArray, cLen: Long, pk: ByteArray, sk: ByteArray) = true
     }
 
     private class FakeRandomNative : com.goterl.lazysodium.interfaces.Random {
-        override fun randomBytesRandom(): Int = 42
+        override fun randomBytesRandom(): Long = 42L
         override fun randomBytesBuf(size: Int): ByteArray = ByteArray(size) { 0x42 }
-        override fun randomBytesBuf(buf: ByteArray, size: Int) { buf.fill(0x42) }
-        override fun randomBytesUniform(upperBound: Int): Int = 0
-        override fun randomBytesDeterministic(buf: ByteArray, size: Int, seed: ByteArray) {}
+        override fun randomBytesUniform(upperBound: Int): Long = 0L
+        override fun randomBytesDeterministic(size: Int, seed: ByteArray): ByteArray = ByteArray(size)
+        override fun nonce(size: Int): ByteArray = ByteArray(size) { 0x11 }
     }
 
     private class FakeEncryptor : ru.cheburmail.app.crypto.MessageEncryptor(

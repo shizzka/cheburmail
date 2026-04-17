@@ -6,7 +6,7 @@ import ru.cheburmail.app.crypto.model.KeyPair
 /**
  * Generates X25519 key pairs via crypto_box_keypair.
  */
-class KeyPairGenerator(private val box: Box.Lazy) {
+open class KeyPairGenerator(private val box: Box.Lazy) {
 
     /**
      * Generate a new X25519 key pair.

@@ -174,9 +174,14 @@ class SendWorkerTest {
             return item.id
         }
 
-        override suspend fun getQueued(): List<SendQueueEntity> {
-            return entries.filter { it.status == QueueStatus.QUEUED }
+        override suspend fun getQueued(now: Long): List<SendQueueEntity> {
+            return entries.filter {
+                it.status == QueueStatus.QUEUED &&
+                    (it.nextRetryAt == null || it.nextRetryAt <= now)
+            }
         }
+
+        override suspend fun getAll(): List<SendQueueEntity> = entries.toList()
 
         override suspend fun getByMessageId(messageId: String): List<SendQueueEntity> {
             return entries.filter { it.messageId == messageId }
@@ -216,6 +221,24 @@ class SendWorkerTest {
         override suspend fun getByIdOnce(id: String): MessageEntity? = messages[id]
         override suspend fun deleteExpired(now: Long): Int = 0
         override suspend fun existsById(id: String): Boolean = messages.containsKey(id)
+        override suspend fun getAllOnce(): List<MessageEntity> = messages.values.toList()
+        override suspend fun getForChatOnce(chatId: String): List<MessageEntity> =
+            messages.values.filter { it.chatId == chatId }
+        override suspend fun markChatAsRead(chatId: String) {}
+        override suspend fun deleteByChatId(chatId: String) {
+            messages.entries.removeAll { it.value.chatId == chatId }
+        }
+        override suspend fun deleteById(messageId: String) { messages.remove(messageId) }
+        override suspend fun updateMedia(
+            messageId: String,
+            localUri: String?,
+            thumbnailUri: String?,
+            downloadStatus: ru.cheburmail.app.db.MediaDownloadStatus
+        ) {}
+        override suspend fun insertDeleted(
+            deleted: ru.cheburmail.app.db.entity.DeletedMessageEntity
+        ) {}
+        override suspend fun isDeleted(messageId: String): Boolean = false
     }
 
     private class FakeContactDao : ru.cheburmail.app.db.dao.ContactDao {
@@ -232,5 +255,6 @@ class SendWorkerTest {
         override suspend fun update(contact: ContactEntity) {}
         override suspend fun delete(contact: ContactEntity) {}
         override suspend fun deleteById(id: Long) {}
+        override suspend fun getAllOnce(): List<ContactEntity> = contacts.values.toList()
     }
 }

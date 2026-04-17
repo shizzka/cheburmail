@@ -96,7 +96,8 @@ class ReceiveWorker(
                     body = kexEmail.body,
                     fromEmail = kexEmail.from,
                     config = emailConfig,
-                    kexUuid = kexUuid
+                    kexUuid = kexUuid,
+                    messageTimestamp = kexEmail.sentDate
                 )
 
                 // Удаляем keyex-письмо из IMAP, чтобы не перечитывать его на следующем poll.

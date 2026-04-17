@@ -45,20 +45,22 @@ object UpdateChecker {
      * @return UpdateInfo если есть обновление, null если нет или ошибка.
      */
     suspend fun check(context: Context): UpdateInfo? = withContext(Dispatchers.IO) {
+        val isDebug = isDebugBuild(context)
+        val apiUrl = if (isDebug) GITHUB_API_LIST else GITHUB_API_LATEST
+        var connection: HttpURLConnection? = null
         try {
-            val isDebug = isDebugBuild(context)
-            val apiUrl = if (isDebug) GITHUB_API_LIST else GITHUB_API_LATEST
-            val connection = URL(apiUrl).openConnection() as HttpURLConnection
-            connection.setRequestProperty("Accept", "application/vnd.github+json")
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
+            connection = (URL(apiUrl).openConnection() as HttpURLConnection).apply {
+                setRequestProperty("Accept", "application/vnd.github+json")
+                connectTimeout = 10_000
+                readTimeout = 10_000
+            }
 
             if (connection.responseCode != 200) {
                 Log.w(TAG, "GitHub API returned ${connection.responseCode}")
                 return@withContext null
             }
 
-            val body = connection.inputStream.bufferedReader().readText()
+            val body = connection.inputStream.bufferedReader().use { it.readText() }
             // Debug — ищем последний prerelease в списке; release — используем /releases/latest.
             val json: JSONObject = if (isDebug) {
                 val arr = JSONArray(body)
@@ -117,6 +119,8 @@ object UpdateChecker {
         } catch (e: Exception) {
             Log.e(TAG, "Update check failed: ${e.message}")
             null
+        } finally {
+            connection?.disconnect()
         }
     }
 

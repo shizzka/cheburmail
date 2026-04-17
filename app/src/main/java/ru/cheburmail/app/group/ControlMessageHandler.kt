@@ -1,6 +1,7 @@
 package ru.cheburmail.app.group
 
 import android.util.Log
+import ru.cheburmail.app.crypto.FingerprintGenerator
 import ru.cheburmail.app.db.ChatType
 import ru.cheburmail.app.db.TrustStatus
 import ru.cheburmail.app.db.dao.ChatDao
@@ -8,6 +9,7 @@ import ru.cheburmail.app.db.dao.ContactDao
 import ru.cheburmail.app.db.entity.ChatEntity
 import ru.cheburmail.app.db.entity.ChatMemberEntity
 import ru.cheburmail.app.db.entity.ContactEntity
+import ru.cheburmail.app.storage.SecureKeyStorage
 
 /**
  * Обработчик входящих управляющих сообщений групповых чатов.
@@ -23,7 +25,8 @@ import ru.cheburmail.app.db.entity.ContactEntity
 class ControlMessageHandler(
     private val chatDao: ChatDao,
     private val contactDao: ContactDao,
-    private val selfEmail: String = ""
+    private val selfEmail: String = "",
+    private val keyStorage: SecureKeyStorage? = null
 ) {
 
     /**
@@ -122,6 +125,14 @@ class ControlMessageHandler(
             return
         }
 
+        // Если кикнули меня — удалить чат локально, чтобы не слать в пустоту.
+        // FK CASCADE уберёт chat_members и messages.
+        if (selfEmail.isNotEmpty() && target.equals(selfEmail, ignoreCase = true)) {
+            chatDao.deleteById(msg.chatId)
+            Log.i(TAG, "MEMBER_REMOVED: меня ($selfEmail) удалили из ${msg.chatId} → чат удалён локально")
+            return
+        }
+
         val contact = contactDao.getByEmail(target)
         if (contact == null) {
             Log.w(TAG, "Контакт $target не найден для удаления из группы")
@@ -148,13 +159,16 @@ class ControlMessageHandler(
         }
         var contact = contactDao.getByEmail(memberInfo.email)
         if (contact == null) {
-            // Создать новый контакт из данных управляющего сообщения
+            // Создать новый контакт из данных управляющего сообщения.
+            // Вычисляем fingerprint сразу, чтобы UI сразу показывал safety number и
+            // пользователь мог верифицировать контакт без ожидания keyex.
             val publicKeyBytes = java.util.Base64.getDecoder().decode(memberInfo.publicKey)
+            val fingerprint = computeFingerprintOrEmpty(publicKeyBytes)
             contact = ContactEntity(
                 email = memberInfo.email,
                 displayName = memberInfo.displayName,
                 publicKey = publicKeyBytes,
-                fingerprint = "", // Будет вычислен позже
+                fingerprint = fingerprint,
                 trustStatus = TrustStatus.UNVERIFIED,
                 createdAt = now,
                 updatedAt = now
@@ -172,6 +186,17 @@ class ControlMessageHandler(
                 joinedAt = now
             )
         )
+    }
+
+    private suspend fun computeFingerprintOrEmpty(remotePublicKey: ByteArray): String {
+        val storage = keyStorage ?: return ""
+        return try {
+            val localPub = storage.getPublicKey() ?: return ""
+            FingerprintGenerator.generateHex(localPub, remotePublicKey)
+        } catch (e: Exception) {
+            Log.w(TAG, "Не удалось вычислить fingerprint: ${e.message}")
+            ""
+        }
     }
 
     companion object {

@@ -45,13 +45,6 @@ import ru.cheburmail.app.notification.NotificationHelper
 import ru.cheburmail.app.repository.AccountRepository
 import ru.cheburmail.app.storage.SecureKeyStorage
 import ru.cheburmail.app.sync.OutboxDrainWorker
-import ru.cheburmail.app.transport.EmailFormatter
-import ru.cheburmail.app.transport.EmailParser
-import ru.cheburmail.app.transport.ImapClient
-import ru.cheburmail.app.transport.ReceiveWorker
-import ru.cheburmail.app.transport.RetryStrategy
-import ru.cheburmail.app.transport.SmtpClient
-import ru.cheburmail.app.transport.TransportService
 import ru.cheburmail.app.group.GroupMessageSender
 import ru.cheburmail.app.messaging.ChatIdGenerator
 import java.util.UUID
@@ -246,49 +239,23 @@ class ChatViewModel(
             val accountRepo = AccountRepository.create(appContext)
             val config = accountRepo.getActive() ?: return@withContext
 
-            val ls = CryptoProvider.lazySodium
-            val nonceGen = NonceGenerator(ls)
-            val decryptor = MessageDecryptor(ls)
-            val transportService = TransportService(
-                smtpClient = SmtpClient(),
-                imapClient = ImapClient(),
-                emailFormatter = EmailFormatter(),
-                emailParser = EmailParser(),
-                encryptor = ru.cheburmail.app.crypto.MessageEncryptor(ls, nonceGen),
-                decryptor = decryptor
-            )
-
             val keyPair = keyStorage.getOrCreateKeyPair()
-            val db = ru.cheburmail.app.db.CheburMailDatabase.getInstance(appContext)
-            val keyExchangeManager = ru.cheburmail.app.messaging.KeyExchangeManager(
-                smtpClient = SmtpClient(),
-                contactDao = db.contactDao(),
+            val mediaDecryptor = ru.cheburmail.app.media.MediaDecryptor(MessageDecryptor(CryptoProvider.lazySodium))
+
+            val receiveWorker = ru.cheburmail.app.sync.SyncFactory(appContext).buildReceiveWorker(
+                config = config,
+                privateKey = keyPair.getPrivateKey(),
                 keyStorage = keyStorage,
-                processedDao = db.processedKeyExchangeDao(),
-                imapClient = ImapClient()
-            )
-            val mediaDecryptor = ru.cheburmail.app.media.MediaDecryptor(decryptor)
-            val receiveWorker = ReceiveWorker(
-                transportService = transportService,
-                decryptor = decryptor,
-                retryStrategy = RetryStrategy(),
-                messageDao = db.messageDao(),
-                contactDao = db.contactDao(),
-                chatDao = db.chatDao(),
-                notificationHelper = NotificationHelper(appContext),
-                recipientPrivateKey = keyPair.getPrivateKey(),
-                keyExchangeManager = keyExchangeManager,
-                emailConfig = config,
                 mediaDecryptor = mediaDecryptor,
-                mediaFileManager = mediaFileManager,
-                controlMessageHandler = ru.cheburmail.app.group.ControlMessageHandler(
-                    chatDao = db.chatDao(),
-                    contactDao = db.contactDao(),
-                    selfEmail = config.email
-                )
+                mediaFileManager = mediaFileManager
             )
 
-            val received = receiveWorker.pollAndProcess(config)
+            val received: Int
+            try {
+                received = receiveWorker.pollAndProcess(config)
+            } finally {
+                receiveWorker.wipePrivateKey()
+            }
             if (received > 0) {
                 Log.i(TAG, "$source: получено $received новых сообщений")
             }
@@ -485,7 +452,8 @@ class ChatViewModel(
                             sendQueueDao = sendQueueDao,
                             encryptor = encryptor,
                             senderPrivateKey = keyPair.getPrivateKey(),
-                            senderEmail = myEmail
+                            senderEmail = myEmail,
+                            messageDao = messageDao
                         )
                         sender.sendToGroup(chatId, payload, msgId)
                         OutboxDrainWorker.enqueue(appContext)

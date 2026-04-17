@@ -30,7 +30,7 @@ import ru.cheburmail.app.db.entity.SendQueueEntity
         DeletedMessageEntity::class,
         ProcessedKeyExchangeEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -44,6 +44,18 @@ abstract class CheburMailDatabase : RoomDatabase() {
 
     companion object {
         private const val DB_NAME = "cheburmail.db"
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Индекс для ленивого GC processed_keyex по processed_at:
+                // deleteOlderThan() без индекса делает full-scan после накопления
+                // нескольких тысяч записей → заметные лаги на poll.
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS idx_processed_keyex_at " +
+                        "ON processed_keyex(processed_at)"
+                )
+            }
+        }
 
         val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -106,7 +118,10 @@ abstract class CheburMailDatabase : RoomDatabase() {
                     CheburMailDatabase::class.java,
                     DB_NAME
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(
+                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
+                        MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7
+                    )
                     .build().also { INSTANCE = it }
             }
     }

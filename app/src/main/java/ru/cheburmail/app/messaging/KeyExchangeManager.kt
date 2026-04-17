@@ -43,14 +43,18 @@ class KeyExchangeManager(
     private val keyStorage: SecureKeyStorage,
     private val notificationHelper: NotificationHelper? = null,
     private val processedDao: ProcessedKeyExchangeDao? = null,
-    private val imapClient: ImapClient? = null
+    private val imapClient: ImapClient? = null,
+    /**
+     * Персистентное хранилище rate-limit. По умолчанию in-memory —
+     * после рестарта процесса rate-limit обнуляется.
+     * В проде подставляется [KeyexRateLimitStore.sharedPrefs], чтобы
+     * флуд-защита пережила перезапуск service'а.
+     */
+    private val rateLimitStore: KeyexRateLimitStore = KeyexRateLimitStore.inMemory()
 ) {
 
     /** Кэш в памяти — используется если нет [processedDao] (в тестах/старых воркерах). */
     private val processedKexUuids = ConcurrentHashMap<String, Long>()
-
-    /** Rate-limit: последний timestamp отправки keyex на адрес. */
-    private val lastSentToEmail = ConcurrentHashMap<String, Long>()
 
     /**
      * Отправить свой публичный ключ на указанный email.
@@ -58,7 +62,7 @@ class KeyExchangeManager(
      */
     suspend fun sendKeyExchange(config: EmailConfig, targetEmail: String) {
         val now = System.currentTimeMillis()
-        val last = lastSentToEmail[targetEmail]
+        val last = rateLimitStore.lastSent(targetEmail)
         if (last != null && now - last < SEND_RATE_LIMIT_MS) {
             Log.d(TAG, "Rate-limit: keyex to $targetEmail уже отправлен ${now - last}ms назад, пропускаем")
             return
@@ -85,7 +89,7 @@ class KeyExchangeManager(
         )
 
         smtpClient.send(config, emailMessage)
-        lastSentToEmail[targetEmail] = now
+        rateLimitStore.markSent(targetEmail, now)
         Log.i(TAG, "Key exchange отправлен -> $targetEmail")
     }
 
@@ -108,7 +112,8 @@ class KeyExchangeManager(
         body: ByteArray,
         fromEmail: String,
         config: EmailConfig?,
-        kexUuid: String? = null
+        kexUuid: String? = null,
+        messageTimestamp: Long? = null
     ): Boolean {
         try {
             // Дедупликация по UUID (персистентная если есть DAO, иначе in-memory)
@@ -121,6 +126,13 @@ class KeyExchangeManager(
             val json = JSONObject(jsonStr)
 
             val senderEmail = json.getString("email")
+            // Защита от MITM: email из JSON-тела должен совпадать с envelope From.
+            // Иначе атакующий с доступом к SMTP может подменить ключ для чужого адреса.
+            if (!senderEmail.equals(fromEmail, ignoreCase = true)) {
+                Log.w(TAG, "keyex envelope/json email mismatch: envelope=$fromEmail json=$senderEmail — отклонено")
+                markProcessed(kexUuid)
+                return false
+            }
             val publicKeyBase64 = json.getString("publicKey")
             val displayName = json.optString("displayName", senderEmail.substringBefore('@'))
 
@@ -148,6 +160,15 @@ class KeyExchangeManager(
                 if (existing.trustStatus == TrustStatus.VERIFIED) {
                     Log.w(TAG, "ОТКЛОНЕНО: смена ключа VERIFIED контакта $senderEmail. Требуется ручное обновление.")
                     notificationHelper?.showKeyChangeWarning(senderEmail, wasVerified = true)
+                    markProcessed(kexUuid)
+                    return false
+                }
+
+                // Race guard: IMAP может вернуть устаревший keyex позже свежего.
+                // Если timestamp письма старее, чем updatedAt текущего контакта — игнорируем,
+                // иначе старый ключ перезатрёт актуальный и связь порвётся.
+                if (messageTimestamp != null && messageTimestamp < existing.updatedAt) {
+                    Log.w(TAG, "keyex stale: $senderEmail ts=$messageTimestamp < updatedAt=${existing.updatedAt} — игнорируем")
                     markProcessed(kexUuid)
                     return false
                 }
@@ -210,7 +231,8 @@ class KeyExchangeManager(
     fun deleteKeyExchangeEmail(config: EmailConfig, kexUuid: String) {
         val imap = imapClient ?: return
         try {
-            // deleteFromImap ищет подстроку в subject; "kex-<uuid>" уникально идентифицирует keyex-письмо.
+            // deleteFromImap matches by whole slash-separated segment; "kex-<uuid>"
+            // is one full segment of subject "CM/1/KEYEX/kex-<uuid>", no substring collisions.
             imap.deleteFromImap(config, "$KEX_PREFIX$kexUuid")
         } catch (e: Exception) {
             Log.w(TAG, "Не удалось удалить keyex $kexUuid из IMAP: ${e.message}")

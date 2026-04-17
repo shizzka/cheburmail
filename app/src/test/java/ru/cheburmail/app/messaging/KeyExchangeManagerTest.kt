@@ -15,6 +15,7 @@ import ru.cheburmail.app.db.entity.ContactEntity
 import ru.cheburmail.app.storage.SecureKeyStorage
 import ru.cheburmail.app.transport.EmailConfig
 import ru.cheburmail.app.transport.EmailMessage
+import ru.cheburmail.app.transport.EmailProvider
 import ru.cheburmail.app.transport.SmtpClient
 
 /**
@@ -36,11 +37,7 @@ class KeyExchangeManagerTest {
     private val config = EmailConfig(
         email = "me@example.com",
         password = "pw",
-        imapHost = "imap",
-        imapPort = 993,
-        smtpHost = "smtp",
-        smtpPort = 587,
-        useTls = true
+        provider = EmailProvider.YANDEX
     )
 
     @Test
@@ -165,6 +162,130 @@ class KeyExchangeManagerTest {
     }
 
     @Test
+    fun `rate-limit persists across manager recreation`() = runBlocking {
+        val dao = FakeContactDao()
+        val smtp = CountingSmtpClient()
+        // Один и тот же store переживает «рестарт процесса».
+        val store = KeyexRateLimitStore.inMemory()
+
+        val manager1 = KeyExchangeManager(
+            smtpClient = smtp,
+            contactDao = dao,
+            keyStorage = FakeKeyStorage(localPublicKey),
+            rateLimitStore = store
+        )
+        manager1.sendKeyExchange(config, "target@example.com")
+        assertEquals(1, smtp.sendCount)
+
+        // Имитируем рестарт: новый менеджер, но тот же persistent store.
+        val manager2 = KeyExchangeManager(
+            smtpClient = smtp,
+            contactDao = dao,
+            keyStorage = FakeKeyStorage(localPublicKey),
+            rateLimitStore = store
+        )
+        manager2.sendKeyExchange(config, "target@example.com")
+
+        assertEquals("rate-limit должен пережить пересоздание менеджера",
+            1, smtp.sendCount)
+    }
+
+    @Test
+    fun `envelope mismatch - json email differs from envelope - rejected`() = runBlocking {
+        val dao = FakeContactDao()
+        val smtp = CountingSmtpClient()
+        val manager = KeyExchangeManager(
+            smtpClient = smtp,
+            contactDao = dao,
+            keyStorage = FakeKeyStorage(localPublicKey)
+        )
+
+        // envelope From = attacker@evil.com, но в JSON подделано legit@example.com
+        manager.handleKeyExchange(
+            keyExBody("legit@example.com", remotePublicKeyV1),
+            fromEmail = "attacker@evil.com",
+            config = config,
+            kexUuid = "uuid-mitm"
+        )
+
+        assertEquals("MITM: ответный keyex не должен отправляться", 0, smtp.sendCount)
+        assertNull("MITM: контакт не должен создаваться", dao.getByEmail("legit@example.com"))
+        assertNull("MITM: атакующий тоже не получает контакт", dao.getByEmail("attacker@evil.com"))
+    }
+
+    @Test
+    fun `stale keyex - older timestamp than contact updatedAt - ignored`() = runBlocking {
+        val dao = FakeContactDao()
+        val now = 10_000L
+        dao.insert(
+            ContactEntity(
+                email = "sender@example.com",
+                displayName = "Sender",
+                publicKey = remotePublicKeyV2,  // актуальный ключ V2
+                fingerprint = "fp-new",
+                trustStatus = TrustStatus.UNVERIFIED,
+                createdAt = 1L,
+                updatedAt = now
+            )
+        )
+        val smtp = CountingSmtpClient()
+        val manager = KeyExchangeManager(
+            smtpClient = smtp,
+            contactDao = dao,
+            keyStorage = FakeKeyStorage(localPublicKey)
+        )
+
+        // Приходит старый keyex с V1 — timestamp раньше чем updatedAt контакта
+        manager.handleKeyExchange(
+            keyExBody("sender@example.com", remotePublicKeyV1),
+            fromEmail = "sender@example.com",
+            config = config,
+            kexUuid = "uuid-stale",
+            messageTimestamp = now - 5_000L
+        )
+
+        val stored = dao.getByEmail("sender@example.com")!!
+        assertTrue("актуальный ключ V2 не должен быть перезатёрт устаревшим keyex",
+            stored.publicKey.contentEquals(remotePublicKeyV2))
+        assertEquals(0, smtp.sendCount)
+    }
+
+    @Test
+    fun `fresh keyex - newer timestamp than contact updatedAt - applied`() = runBlocking {
+        val dao = FakeContactDao()
+        val old = 1_000L
+        dao.insert(
+            ContactEntity(
+                email = "sender@example.com",
+                displayName = "Sender",
+                publicKey = remotePublicKeyV1,
+                fingerprint = "fp-old",
+                trustStatus = TrustStatus.UNVERIFIED,
+                createdAt = 1L,
+                updatedAt = old
+            )
+        )
+        val smtp = CountingSmtpClient()
+        val manager = KeyExchangeManager(
+            smtpClient = smtp,
+            contactDao = dao,
+            keyStorage = FakeKeyStorage(localPublicKey)
+        )
+
+        manager.handleKeyExchange(
+            keyExBody("sender@example.com", remotePublicKeyV2),
+            fromEmail = "sender@example.com",
+            config = config,
+            kexUuid = "uuid-fresh",
+            messageTimestamp = old + 5_000L
+        )
+
+        val stored = dao.getByEmail("sender@example.com")!!
+        assertTrue("свежий keyex должен обновить ключ",
+            stored.publicKey.contentEquals(remotePublicKeyV2))
+    }
+
+    @Test
     fun `existing contact with same key - no-op, no reply`() = runBlocking {
         val dao = FakeContactDao()
         dao.insert(
@@ -215,12 +336,12 @@ class KeyExchangeManagerTest {
         override suspend fun getPublicKey(): ByteArray = key
     }
 
-    private class FakeDataStore : androidx.datastore.core.DataStore<ru.cheburmail.app.storage.StoredKeyData?> {
-        override val data: Flow<ru.cheburmail.app.storage.StoredKeyData?>
+    private class FakeDataStore : androidx.datastore.core.DataStore<ru.cheburmail.app.storage.model.StoredKeyData?> {
+        override val data: Flow<ru.cheburmail.app.storage.model.StoredKeyData?>
             get() = kotlinx.coroutines.flow.flowOf(null)
         override suspend fun updateData(
-            transform: suspend (ru.cheburmail.app.storage.StoredKeyData?) -> ru.cheburmail.app.storage.StoredKeyData?
-        ): ru.cheburmail.app.storage.StoredKeyData? = null
+            transform: suspend (ru.cheburmail.app.storage.model.StoredKeyData?) -> ru.cheburmail.app.storage.model.StoredKeyData?
+        ): ru.cheburmail.app.storage.model.StoredKeyData? = null
     }
 
     private class FakeKeyPairGenerator : ru.cheburmail.app.crypto.KeyPairGenerator(

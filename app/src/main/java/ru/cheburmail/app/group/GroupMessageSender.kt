@@ -21,14 +21,14 @@ import java.util.UUID
  * - Предупреждение при глубине очереди > QUEUE_DEPTH_WARNING (50)
  * - Не шифрует для самого отправителя
  */
-class GroupMessageSender(
+open class GroupMessageSender(
     private val chatDao: ChatDao,
     private val contactDao: ContactDao,
     private val sendQueueDao: SendQueueDao,
     private val encryptor: MessageEncryptor,
     private val senderPrivateKey: ByteArray,
     private val senderEmail: String,
-    private val messageDao: MessageDao? = null
+    private val messageDao: MessageDao
 ) {
 
     /**
@@ -98,11 +98,11 @@ class GroupMessageSender(
      * @param controlMessage управляющее сообщение
      * @return количество созданных элементов очереди
      */
-    suspend fun sendControlToGroup(chatId: String, controlMessage: ControlMessage): Int {
+    open suspend fun sendControlToGroup(chatId: String, controlMessage: ControlMessage): Int {
         val controlUuid = "${ControlMessage.CTRL_PREFIX}${UUID.randomUUID()}"
-        // Плейсхолдер MessageEntity нужен из-за FK send_queue.message_id → messages.id.
-        // Скрывается из UI фильтром `id NOT LIKE 'ctrl-%'` в MessageDao.
-        messageDao?.insert(
+        // Плейсхолдер MessageEntity обязателен из-за FK send_queue.message_id → messages.id
+        // с ON DELETE CASCADE. Скрывается из UI фильтром `id NOT LIKE 'ctrl-%'` в MessageDao.
+        messageDao.insert(
             MessageEntity(
                 id = controlUuid,
                 chatId = chatId,
