@@ -25,7 +25,7 @@ import androidx.room.Index
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index(value = ["created_at"])]
+    indices = [Index(value = ["created_at"], name = "idx_pending_add_at")]
 )
 data class PendingAddRequestEntity(
     @ColumnInfo(name = "chat_id")
