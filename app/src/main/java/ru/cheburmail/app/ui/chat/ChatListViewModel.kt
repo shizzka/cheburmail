@@ -112,7 +112,8 @@ class ChatListViewModel(
                             chatDao = db.chatDao(),
                             contactDao = db.contactDao(),
                             selfEmail = config.email,
-                            keyStorage = keyStorage
+                            keyStorage = keyStorage,
+                            pendingAddRequestDao = db.pendingAddRequestDao()
                         )
                     )
 

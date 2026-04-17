@@ -136,7 +136,13 @@ class ReceiveWorker(
                             contact.publicKey,
                             recipientPrivateKey
                         )
-                        controlMessageHandler?.handle(String(plaintext, Charsets.UTF_8))
+                        // fromEmail передаём в handler для admin/verified gating:
+                        // decrypt с ключом отправителя гарантирует authenticity
+                        // (не подделать) — handler доверяет этому полю.
+                        controlMessageHandler?.handle(
+                            String(plaintext, Charsets.UTF_8),
+                            msg.fromEmail
+                        )
                         Log.d(TAG, "Processed control message: ${msg.msgUuid}")
                     }
                     continue
