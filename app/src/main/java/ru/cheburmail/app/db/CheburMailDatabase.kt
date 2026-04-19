@@ -1,12 +1,15 @@
 package ru.cheburmail.app.db
 
 import android.content.Context
+import android.util.Log
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
+import ru.cheburmail.app.storage.DbPassphraseStorage
 import ru.cheburmail.app.db.dao.ChatDao
 import ru.cheburmail.app.db.dao.ContactDao
 import ru.cheburmail.app.db.dao.MessageDao
@@ -141,22 +144,50 @@ abstract class CheburMailDatabase : RoomDatabase() {
             }
         }
 
+        private const val TAG = "CheburMailDatabase"
+
         @Volatile
         private var INSTANCE: CheburMailDatabase? = null
 
         fun getInstance(context: Context): CheburMailDatabase =
             INSTANCE ?: synchronized(this) {
-                INSTANCE ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    CheburMailDatabase::class.java,
-                    DB_NAME
-                )
-                    .addMigrations(
-                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
-                        MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-                        MIGRATION_7_8
-                    )
-                    .build().also { INSTANCE = it }
+                INSTANCE ?: buildEncrypted(context.applicationContext)
+                    .also { INSTANCE = it }
             }
+
+        private fun buildEncrypted(context: Context): CheburMailDatabase {
+            val passphrase = DbPassphraseStorage.getOrCreate(context)
+
+            // SQLCipher native libs: грузим ДО SupportOpenHelperFactory.
+            // Мигратор грузит свою копию только если миграция ещё нужна;
+            // после setMigrated=true этот путь не вызывается — Room бы
+            // открыл БД без нативки и упал UnsatisfiedLinkError.
+            System.loadLibrary("sqlcipher")
+
+            try {
+                DbCipherMigrator.migrateIfNeeded(context, passphrase)
+            } catch (e: Throwable) {
+                // Миграция упала — Room попробует открыть старый plaintext-файл
+                // с шифрованным ключом и тоже упадёт. Логируем и пробрасываем,
+                // приложение упадёт явно, бэкап `cheburmail.db.plaintext.bak`
+                // (если успел создаться) останется на диске для восстановления.
+                Log.e(TAG, "DbCipherMigrator failed; DB will likely fail to open", e)
+            }
+
+            val factory = SupportOpenHelperFactory(passphrase.toByteArray(Charsets.UTF_8))
+
+            return Room.databaseBuilder(
+                context,
+                CheburMailDatabase::class.java,
+                DB_NAME
+            )
+                .openHelperFactory(factory)
+                .addMigrations(
+                    MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
+                    MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
+                    MIGRATION_7_8
+                )
+                .build()
+        }
     }
 }
