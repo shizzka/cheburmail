@@ -76,11 +76,12 @@ You (encrypt) → SMTP → Email Provider → IMAP → Recipient (decrypt)
 - **Auto-update checker** — get notified when a new version is available (separate debug / release channels)
 
 ### In Development
-- **Delivery receipts** and read status
-- **Disappearing messages** with configurable timer
 - **Multi-account** — switch between email accounts
 - **UI-driven re-invite** for group members who reinstalled the app
 - **Tombstones for deleted groups** so archived IMAP mail can't resurrect a deleted chat
+
+### Intentionally out of scope
+- **Delivery / read receipts** and **disappearing messages** — both require extra control-message traffic over IMAP/SMTP for every sent message, which is the exact opposite of what CheburMail is optimizing for (low provider-side footprint, small metadata surface). Won't be implemented.
 
 ## Supported Providers
 
