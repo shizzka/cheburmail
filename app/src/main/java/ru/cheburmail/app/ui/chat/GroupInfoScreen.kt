@@ -167,7 +167,8 @@ fun GroupInfoScreen(
                     )
 
                     Text(
-                        text = "${members.size} участников" + if (isAdmin) " · вы админ" else "",
+                        // +1 = ты сам; self по дизайну не в chat_members, см. ChatScreen комментарий.
+                        text = "${members.size + 1} участников" + if (isAdmin) " · вы админ" else "",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

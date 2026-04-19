@@ -1,5 +1,6 @@
 package ru.cheburmail.app.ui.navigation
 
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -79,30 +80,51 @@ fun AppNavigation(
     initialChatId: String? = null,
     navController: NavHostController = rememberNavController()
 ) {
-    val hasAccounts by accountRepository.observeHasAccounts()
-        .collectAsState(initial = false)
+    // initial=null → до первой эмиссии DataStore не рендерим NavHost,
+    // иначе startDestination=ONBOARDING проскакивает на один кадр при запуске
+    // даже у залогиненного юзера (мерцание логина).
+    val hasAccountsState by accountRepository.observeHasAccounts()
+        .collectAsState(initial = null)
 
     // Кэшируем email текущего аккаунта для генерации chatId
     var myEmail by remember { mutableStateOf("") }
-    LaunchedEffect(hasAccounts) {
-        if (hasAccounts) {
+    LaunchedEffect(hasAccountsState) {
+        if (hasAccountsState == true) {
             myEmail = accountRepository.getActive()?.email ?: ""
         }
     }
 
+    if (hasAccountsState == null) {
+        // Ждём первую эмиссию. Пустой Box — лучше, чем флеш онбординга.
+        androidx.compose.foundation.layout.Box(
+            modifier = androidx.compose.ui.Modifier.fillMaxSize()
+        ) {}
+        return
+    }
+
+    val hasAccounts = hasAccountsState == true
     val startDestination = if (hasAccounts) Routes.CHAT_LIST else Routes.ONBOARDING
 
     // ViewModels — в реальном приложении будут через DI (Hilt/Koin)
-    val onboardingViewModel = OnboardingViewModel(accountRepository)
-    val contactsViewModel = ContactsViewModel(
-        contactDao = database.contactDao(),
-        keyStorage = keyStorage,
-        accountRepository = accountRepository
-    )
-    val chatListViewModel = ChatListViewModel(database.chatDao(), database.messageDao(), navController.context.applicationContext)
+    // remember обязателен: без него каждая рекомпозиция AppNavigation
+    // (смена hasAccountsState, myEmail и т.д.) пересоздаёт все VM,
+    // их StateFlow стартуют с пустых значений → мерцание списков и заголовков.
     val appContext = navController.context.applicationContext
     val appSettings = ru.cheburmail.app.storage.AppSettings.getInstance(appContext)
-    val settingsViewModel = SettingsViewModel(accountRepository, appSettings, appContext)
+    val onboardingViewModel = remember { OnboardingViewModel(accountRepository) }
+    val contactsViewModel = remember {
+        ContactsViewModel(
+            contactDao = database.contactDao(),
+            keyStorage = keyStorage,
+            accountRepository = accountRepository
+        )
+    }
+    val chatListViewModel = remember {
+        ChatListViewModel(database.chatDao(), database.messageDao(), appContext)
+    }
+    val settingsViewModel = remember {
+        SettingsViewModel(accountRepository, appSettings, appContext)
+    }
 
     // Deep link из уведомления — навигация в конкретный чат
     LaunchedEffect(initialChatId) {
@@ -154,17 +176,22 @@ fun AppNavigation(
             arguments = listOf(navArgument("chatId") { type = NavType.StringType })
         ) { backStackEntry ->
             val chatId = backStackEntry.arguments?.getString("chatId") ?: return@composable
-            val chatViewModel = ChatViewModel(
-                chatId = chatId,
-                messageDao = database.messageDao(),
-                chatDao = database.chatDao(),
-                contactDao = database.contactDao(),
-                sendQueueDao = database.sendQueueDao(),
-                keyStorage = keyStorage,
-                appContext = navController.context.applicationContext,
-                myEmail = myEmail,
-                pendingAddRequestDao = database.pendingAddRequestDao()
-            )
+            // remember обязателен: без него ViewModel пересоздаётся на каждой
+            // рекомпозиции (ввод символа, новое сообщение), Flow стартует с
+            // emptyList → пол-секунды моргает список и заголовок.
+            val chatViewModel = remember(chatId) {
+                ChatViewModel(
+                    chatId = chatId,
+                    messageDao = database.messageDao(),
+                    chatDao = database.chatDao(),
+                    contactDao = database.contactDao(),
+                    sendQueueDao = database.sendQueueDao(),
+                    keyStorage = keyStorage,
+                    appContext = navController.context.applicationContext,
+                    myEmail = myEmail,
+                    pendingAddRequestDao = database.pendingAddRequestDao()
+                )
+            }
             ChatScreen(
                 viewModel = chatViewModel,
                 onBack = { navController.popBackStack() },

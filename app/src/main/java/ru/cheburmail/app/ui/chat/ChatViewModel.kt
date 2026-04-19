@@ -73,10 +73,16 @@ class ChatViewModel(
     val messages: StateFlow<List<MessageEntity>> = messageDao.getForChat(chatId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // false до первой эмиссии из Room. Без этого LazyColumn рендерит пустой
+    // список на один кадр перед тем как отобразить реальные сообщения.
+    private val _messagesLoaded = MutableStateFlow(false)
+    val messagesLoaded: StateFlow<Boolean> = _messagesLoaded.asStateFlow()
+
     init {
         // Помечать как прочитанные когда появляются новые сообщения
         viewModelScope.launch {
             messageDao.getForChat(chatId).collect {
+                if (!_messagesLoaded.value) _messagesLoaded.value = true
                 messageDao.markChatAsRead(chatId)
             }
         }
@@ -155,8 +161,12 @@ class ChatViewModel(
             // Помечаем входящие как прочитанные
             messageDao.markChatAsRead(chatId)
         }
-        // Resolve recipient email from chatId
+        // Resolve recipient email from chatId (только для DM — для группы title
+        // уже выставлен из chat.title и перезаписывать на displayName участника нельзя).
         viewModelScope.launch {
+            val chat = withContext(Dispatchers.IO) { chatDao.getById(chatId) }
+            if (chat?.type == ChatType.GROUP) return@launch
+
             val contacts = withContext(Dispatchers.IO) { contactDao.getAllOnce() }
 
             // Strategy 1: deterministic UUID from sorted email pair

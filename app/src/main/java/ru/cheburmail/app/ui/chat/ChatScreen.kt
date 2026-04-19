@@ -85,6 +85,7 @@ fun ChatScreen(
     onOpenGroupInfo: () -> Unit = {}
 ) {
     val messages by viewModel.messages.collectAsState()
+    val messagesLoaded by viewModel.messagesLoaded.collectAsState()
     val chatTitle by viewModel.chatTitle.collectAsState()
     val isGroup by viewModel.isGroup.collectAsState()
     val groupMembers by viewModel.groupMembers.collectAsState()
@@ -242,10 +243,13 @@ fun ChatScreen(
                             onLongClick = {}
                         ) else Modifier
                     ) {
-                        Text(chatTitle ?: "Чат")
+                        Text(chatTitle.orEmpty())
                         if (isGroup) {
+                            // groupMembers не включает self по дизайну (ensureContactAndMember
+                            // пропускает self, createGroup не добавляет создателя в chat_members).
+                            // +1 = ты сам; так получатель и админ видят одинаковое число.
                             Text(
-                                text = "${groupMembers.size} участников",
+                                text = "${groupMembers.size + 1} участников",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -291,6 +295,11 @@ fun ChatScreen(
                 onRefresh = viewModel::refresh,
                 modifier = Modifier.fillMaxSize()
             ) {
+                // messagesLoaded=false до первой эмиссии Room — не рисуем LazyColumn
+                // чтобы не промаргивать пустой список поверх реальных сообщений.
+                if (!messagesLoaded) {
+                    Box(modifier = Modifier.fillMaxSize()) {}
+                } else
                 LazyColumn(
                     state = listState,
                     reverseLayout = true,

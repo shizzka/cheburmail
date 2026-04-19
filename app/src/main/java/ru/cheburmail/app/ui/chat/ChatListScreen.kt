@@ -88,6 +88,7 @@ fun ChatListScreen(
     onSettings: () -> Unit = {}
 ) {
     val chats by viewModel.chats.collectAsState()
+    val chatsLoaded by viewModel.chatsLoaded.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
     var chatToDelete by remember { mutableStateOf<ChatWithLastMessage?>(null) }
 
@@ -221,7 +222,11 @@ fun ChatListScreen(
                     onRefresh = viewModel::refresh,
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    if (pageChats.isEmpty()) {
+                    if (!chatsLoaded) {
+                        // Пока Room не отдал первую эмиссию — пустой Box,
+                        // иначе placeholder «Нет чатов» мелькает поверх реальных данных.
+                        Box(modifier = Modifier.fillMaxSize()) {}
+                    } else if (pageChats.isEmpty()) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
