@@ -43,36 +43,44 @@ You (encrypt) → SMTP → Email Provider → IMAP → Recipient (decrypt)
 | Key exchange | X25519 (Curve25519 Diffie-Hellman) |
 | Encryption | XSalsa20-Poly1305 (authenticated) |
 | Key storage | Android Keystore + Tink AEAD |
+| Local database | SQLCipher (AES-256), passphrase in encrypted DataStore |
 | Implementation | libsodium via lazysodium-android |
 | Media | Per-file encryption with separate keys |
 
 - **Zero-knowledge**: the email provider cannot read your messages
 - **No custom servers**: nothing to hack, shut down, or subpoena
-- **Forward secrecy**: unique nonce per message
-- **Verification**: fingerprint comparison via QR code
+- **Encrypted at rest**: contacts, chats, messages, fingerprints — all stored in a SQLCipher database; a stolen or rooted device cannot read the DB without the app-bound passphrase
+- **Unique nonce per message**
+- **Verification**: fingerprint comparison via QR code or manual 60-digit safety number
 
 ## Features
 
 ### Working
 - **1-on-1 chats** with E2E encryption
+- **Group chats** with E2E encryption (fan-out: each member gets their own ciphertext, no shared key)
+- **Admin-approved group joins** — non-admin adds go through an approval queue, admin confirms by fingerprint before the invite is sent
 - **Media messages**: images, files, voice recordings — all encrypted
 - **QR code key exchange** — scan in person, no server needed
-- **Key fingerprint verification** — 60-digit safety number
+- **Manual key exchange without QR** — paste a short code when scanning isn't possible
+- **Key fingerprint verification** — 60-digit safety number (QR or manual)
+- **Automatic re-keyex after reinstall** — the app detects a peer that lost its keys and re-exchanges, with anti-spam rate limiting (`ReactiveKeyexGate`)
 - **Reply, quote, and delete** messages (deletes from IMAP too)
 - **Rename chats**
 - **Background sync** via WorkManager + IMAP IDLE
 - **Screenshot protection** in chat screens
+- **Encrypted local database** (SQLCipher) with transparent migration from older plaintext installs
 - **No tracking, no analytics, no ads**
 
 - **PIN / biometric lock** — protect the app with a PIN code or fingerprint
 - **IMAP auto-cleanup** — automatically delete processed emails older than 7 days
-- **Auto-update checker** — get notified when a new version is available
+- **Auto-update checker** — get notified when a new version is available (separate debug / release channels)
 
 ### In Development
-- **Group chats** with E2E encryption
 - **Delivery receipts** and read status
 - **Disappearing messages** with configurable timer
 - **Multi-account** — switch between email accounts
+- **UI-driven re-invite** for group members who reinstalled the app
+- **Tombstones for deleted groups** so archived IMAP mail can't resurrect a deleted chat
 
 ## Supported Providers
 
@@ -103,7 +111,7 @@ cd cheburmail
 - **UI**: Jetpack Compose + Material 3
 - **Crypto**: lazysodium-android (libsodium) + Google Tink
 - **Transport**: JavaMail (IMAP/SMTP)
-- **Storage**: Room + Encrypted DataStore
+- **Storage**: Room over SQLCipher + Encrypted DataStore
 - **Sync**: WorkManager + IMAP IDLE foreground service
 - **QR**: ZXing (generation) + Google Code Scanner (scanning)
 - **Min SDK**: 26 (Android 8.0)
@@ -117,8 +125,8 @@ cd cheburmail
 ├──────────┬──────────┬───────────┬────────────┤
 │  crypto/ │transport/│  storage/ │   sync/    │
 │          │          │           │            │
-│ X25519   │ SMTP     │ Room DB   │ WorkManager│
-│ XSalsa20 │ IMAP     │ DataStore │ IMAP IDLE  │
+│ X25519   │ SMTP     │ Room+     │ WorkManager│
+│ XSalsa20 │ IMAP     │ SQLCipher │ IMAP IDLE  │
 │ libsodium│ JavaMail │ Tink AEAD │            │
 └──────────┴──────────┴───────────┴────────────┘
          ↕                    ↕
@@ -143,7 +151,10 @@ Email is federated, battle-tested infrastructure that already exists everywhere.
 No. Messages are encrypted on your device before they ever reach the email server. The provider sees the sender, recipient, and timestamps — but the message content is indistinguishable from random data.
 
 **What happens if I lose my device?**
-You lose your messages and keys. This is by design — there is no backup, no server-side recovery, no way to extract your keys. If someone steals your phone, your contacts just need to re-exchange keys with your new device.
+You lose your messages and keys. This is by design — there is no backup, no server-side recovery, no way to extract your keys. If someone steals your phone, your contacts just need to re-exchange keys with your new device; the local database is encrypted with SQLCipher, so the thief cannot read your chats even with root.
+
+**What if someone gets added to a group chat without my approval?**
+They can't. Only group admins can add new members. When a non-admin tries to add someone, the admin sees a verification request with the new member's key fingerprint and must explicitly approve before the invite is sent to the group.
 
 **Can I use Gmail / Outlook?**
 Not yet. Currently supports Yandex Mail and Mail.ru. Adding more providers is straightforward — PRs welcome.
