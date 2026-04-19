@@ -65,6 +65,7 @@ datastore-core = { group = "androidx.datastore", name = "datastore-core", versio
 lazysodium-android = { group = "com.goterl", name = "lazysodium-android", version.ref = "lazysodium-android" }
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 tink-android = { group = "com.google.crypto.tink", name = "tink-android", version.ref = "tink-android" }
+sqlcipher-android = { group = "net.zetetic", name = "sqlcipher-android", version.ref = "sqlcipher" }
 
 # Coroutines
 coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }

@@ -14,6 +14,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -59,6 +61,8 @@ fun ContactDetailScreen(
     val safetyNumber by viewModel.safetyNumber.collectAsState()
     val keyRefreshState by viewModel.keyRefreshState.collectAsState()
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showVerifyDialog by remember { mutableStateOf(false) }
+    var showUnverifyDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -162,6 +166,57 @@ fun ContactDetailScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Ручная верификация по fingerprint (без QR)
+            when (currentContact.trustStatus) {
+                TrustStatus.UNVERIFIED -> {
+                    Button(
+                        onClick = { showVerifyDialog = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Verified,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Подтвердить вручную")
+                    }
+                    Text(
+                        text = "Сначала сверьте код безопасности с собеседником через надёжный " +
+                            "канал (видеозвонок, личная встреча). Без сверки контакт могут " +
+                            "подменить — атакующий прочитает все сообщения, включая групповые.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                    )
+                }
+                TrustStatus.VERIFIED -> {
+                    Button(
+                        onClick = { showUnverifyDialog = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.WarningAmber,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Сбросить верификацию")
+                    }
+                }
+                TrustStatus.BLOCKED -> {}
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // Кнопка обновления ключа
             Button(
                 onClick = { viewModel.refreshKey(currentContact) },
@@ -199,6 +254,59 @@ fun ContactDetailScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
         }
+    }
+
+    if (showVerifyDialog) {
+        AlertDialog(
+            onDismissRequest = { showVerifyDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Verified,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            },
+            title = { Text("Подтвердить контакт?") },
+            text = {
+                Text(
+                    "Вы сравнили код безопасности с собеседником через надёжный канал " +
+                        "(видеозвонок, личная встреча) и он совпал?\n\n" +
+                        "После подтверждения контакт можно будет добавлять в группы. " +
+                        "Если коды НЕ совпадают — не подтверждайте: канал перехвачен."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.updateTrustStatus(currentContact, TrustStatus.VERIFIED)
+                    showVerifyDialog = false
+                }) { Text("Коды совпадают, подтвердить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showVerifyDialog = false }) { Text("Отмена") }
+            }
+        )
+    }
+
+    if (showUnverifyDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnverifyDialog = false },
+            title = { Text("Сбросить верификацию?") },
+            text = {
+                Text(
+                    "Контакт станет неверифицированным. Его нельзя будет добавлять в группы " +
+                        "до повторной сверки кода безопасности."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.updateTrustStatus(currentContact, TrustStatus.UNVERIFIED)
+                    showUnverifyDialog = false
+                }) { Text("Сбросить", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUnverifyDialog = false }) { Text("Отмена") }
+            }
+        )
     }
 
     if (showDeleteDialog) {

@@ -22,6 +22,7 @@ import ru.cheburmail.app.db.CheburMailDatabase
 import ru.cheburmail.app.db.dao.ChatDao
 import ru.cheburmail.app.db.dao.MessageDao
 import ru.cheburmail.app.messaging.KeyExchangeManager
+import ru.cheburmail.app.messaging.ReactiveKeyexGate
 import ru.cheburmail.app.notification.NotificationHelper
 import ru.cheburmail.app.repository.AccountRepository
 import ru.cheburmail.app.storage.SecureKeyStorage
@@ -46,6 +47,19 @@ class ChatListViewModel(
 
     val chats: StateFlow<List<ChatWithLastMessage>> = chatDao.getAllWithLastMessage()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // false до первой эмиссии из Room — иначе UI на один кадр рисует placeholder
+    // «Нет чатов» поверх реально существующего списка (мерцание при входе).
+    private val _chatsLoaded = MutableStateFlow(false)
+    val chatsLoaded: StateFlow<Boolean> = _chatsLoaded.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            chatDao.getAllWithLastMessage().collect {
+                if (!_chatsLoaded.value) _chatsLoaded.value = true
+            }
+        }
+    }
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
@@ -112,8 +126,10 @@ class ChatListViewModel(
                             chatDao = db.chatDao(),
                             contactDao = db.contactDao(),
                             selfEmail = config.email,
-                            keyStorage = keyStorage
-                        )
+                            keyStorage = keyStorage,
+                            pendingAddRequestDao = db.pendingAddRequestDao()
+                        ),
+                        reactiveKeyexGate = ReactiveKeyexGate.sharedPrefs(ctx)
                     )
 
                     val received = receiveWorker.pollAndProcess(config)

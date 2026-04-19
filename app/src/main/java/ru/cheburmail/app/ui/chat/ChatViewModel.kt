@@ -29,10 +29,15 @@ import ru.cheburmail.app.db.QueueStatus
 import ru.cheburmail.app.db.dao.ChatDao
 import ru.cheburmail.app.db.dao.ContactDao
 import ru.cheburmail.app.db.dao.MessageDao
+import ru.cheburmail.app.db.dao.PendingAddRequestDao
 import ru.cheburmail.app.db.dao.SendQueueDao
 import ru.cheburmail.app.db.entity.ChatEntity
+import ru.cheburmail.app.db.entity.ContactEntity
 import ru.cheburmail.app.db.entity.MessageEntity
+import ru.cheburmail.app.db.entity.PendingAddRequestEntity
 import ru.cheburmail.app.db.entity.SendQueueEntity
+import ru.cheburmail.app.db.TrustStatus
+import kotlinx.coroutines.flow.flowOf
 import ru.cheburmail.app.crypto.MessageDecryptor
 import ru.cheburmail.app.media.FileSaver
 import ru.cheburmail.app.media.ImageCompressor
@@ -61,16 +66,23 @@ class ChatViewModel(
     private val sendQueueDao: SendQueueDao,
     private val keyStorage: SecureKeyStorage,
     private val appContext: Context,
-    private val myEmail: String = ""
+    private val myEmail: String = "",
+    private val pendingAddRequestDao: PendingAddRequestDao? = null
 ) : ViewModel() {
 
     val messages: StateFlow<List<MessageEntity>> = messageDao.getForChat(chatId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // false до первой эмиссии из Room. Без этого LazyColumn рендерит пустой
+    // список на один кадр перед тем как отобразить реальные сообщения.
+    private val _messagesLoaded = MutableStateFlow(false)
+    val messagesLoaded: StateFlow<Boolean> = _messagesLoaded.asStateFlow()
+
     init {
         // Помечать как прочитанные когда появляются новые сообщения
         viewModelScope.launch {
             messageDao.getForChat(chatId).collect {
+                if (!_messagesLoaded.value) _messagesLoaded.value = true
                 messageDao.markChatAsRead(chatId)
             }
         }
@@ -84,6 +96,20 @@ class ChatViewModel(
 
     private val _groupMembers = MutableStateFlow<List<ru.cheburmail.app.db.entity.ContactEntity>>(emptyList())
     val groupMembers: StateFlow<List<ru.cheburmail.app.db.entity.ContactEntity>> = _groupMembers.asStateFlow()
+
+    private val _isAdmin = MutableStateFlow(false)
+    val isAdmin: StateFlow<Boolean> = _isAdmin.asStateFlow()
+
+    /**
+     * Pending-запросы на добавление участника. Непустой список в норме
+     * только у админа (ControlMessageHandler.handleMemberAddRequest пишет
+     * в эту таблицу только если self == chat.created_by). У не-админа
+     * остаётся пустым (даже если он requester — свой запрос он видит по
+     * отдельной логике; но в текущем MVP ограничиваемся индикацией у админа).
+     */
+    val pendingAddRequests: StateFlow<List<PendingAddRequestEntity>> =
+        (pendingAddRequestDao?.observeForChat(chatId) ?: flowOf(emptyList()))
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _inputText = MutableStateFlow("")
     val inputText: StateFlow<String> = _inputText.asStateFlow()
@@ -128,14 +154,19 @@ class ChatViewModel(
             val chat = chatDao.getById(chatId)
             _chatTitle.value = chat?.title ?: "Чат"
             _isGroup.value = chat?.type == ChatType.GROUP
+            _isAdmin.value = chat?.createdBy?.equals(myEmail, ignoreCase = true) == true
             if (_isGroup.value) {
                 refreshGroupMembers()
             }
             // Помечаем входящие как прочитанные
             messageDao.markChatAsRead(chatId)
         }
-        // Resolve recipient email from chatId
+        // Resolve recipient email from chatId (только для DM — для группы title
+        // уже выставлен из chat.title и перезаписывать на displayName участника нельзя).
         viewModelScope.launch {
+            val chat = withContext(Dispatchers.IO) { chatDao.getById(chatId) }
+            if (chat?.type == ChatType.GROUP) return@launch
+
             val contacts = withContext(Dispatchers.IO) { contactDao.getAllOnce() }
 
             // Strategy 1: deterministic UUID from sorted email pair
@@ -282,32 +313,130 @@ class ChatViewModel(
         _groupMembers.value = contacts
     }
 
+    /**
+     * Построить GroupManager с приватным ключом из keyStorage.
+     * Вызывающий ОБЯЗАН вызвать privateKey.fill(0) после использования.
+     */
+    private suspend fun buildManagerWithKey(): Pair<ru.cheburmail.app.group.GroupManager, ByteArray>? {
+        val privateKey = keyStorage.getPrivateKey() ?: return null
+        val ls = CryptoProvider.lazySodium
+        val encryptor = MessageEncryptor(ls, NonceGenerator(ls))
+        val sender = GroupMessageSender(
+            chatDao = chatDao,
+            contactDao = contactDao,
+            sendQueueDao = sendQueueDao,
+            encryptor = encryptor,
+            senderPrivateKey = privateKey,
+            senderEmail = myEmail,
+            messageDao = messageDao
+        )
+        val manager = ru.cheburmail.app.group.GroupManager(
+            chatDao = chatDao,
+            contactDao = contactDao,
+            groupMessageSender = sender,
+            pendingAddRequestDao = pendingAddRequestDao,
+            selfEmail = myEmail.ifEmpty { null }
+        )
+        return manager to privateKey
+    }
+
     fun removeGroupMember(contactId: Long) {
         viewModelScope.launch {
             try {
-                val privateKey = keyStorage.getPrivateKey() ?: return@launch
-                val ls = CryptoProvider.lazySodium
-                val encryptor = MessageEncryptor(ls, NonceGenerator(ls))
-                val sender = GroupMessageSender(
-                    chatDao = chatDao,
-                    contactDao = contactDao,
-                    sendQueueDao = sendQueueDao,
-                    encryptor = encryptor,
-                    senderPrivateKey = privateKey,
-                    senderEmail = myEmail,
-                    messageDao = messageDao
-                )
-                val manager = ru.cheburmail.app.group.GroupManager(
-                    chatDao = chatDao,
-                    contactDao = contactDao,
-                    groupMessageSender = sender
-                )
-                manager.removeMember(chatId, contactId)
-                privateKey.fill(0)
+                val (manager, privateKey) = buildManagerWithKey() ?: return@launch
+                try {
+                    manager.removeMember(chatId, contactId)
+                } finally {
+                    privateKey.fill(0)
+                }
                 refreshGroupMembers()
             } catch (e: Exception) {
                 Log.e(TAG, "Ошибка удаления участника: ${e.message}")
                 _userError.value = "Не удалось удалить участника: ${e.message}"
+            }
+        }
+    }
+
+    /**
+     * Список verified-контактов, которых ещё нет в группе — кандидаты на добавление.
+     * Snapshot: UI вызывает при открытии пикера.
+     */
+    suspend fun availableContactsForAdd(): List<ContactEntity> {
+        val memberIds = chatDao.getMembersForChat(chatId).map { it.contactId }.toSet()
+        return contactDao.getAllOnce()
+            .asSequence()
+            .filter { it.id !in memberIds }
+            .filter { it.trustStatus == TrustStatus.VERIFIED }
+            .filter { !it.email.equals(myEmail, ignoreCase = true) }
+            .toList()
+    }
+
+    /**
+     * Маршрутизация кнопки "+ участник":
+     * - admin → addMember сразу
+     * - verified не-admin → requestAddMember (шлёт запрос админу)
+     */
+    fun addOrRequestMember(contactId: Long) {
+        viewModelScope.launch {
+            try {
+                val (manager, privateKey) = buildManagerWithKey() ?: run {
+                    _userError.value = "Нет доступа к ключу отправителя"
+                    return@launch
+                }
+                try {
+                    if (_isAdmin.value) {
+                        manager.addMember(chatId, contactId)
+                        _userError.value = "Участник добавлен"
+                    } else {
+                        val ok = manager.requestAddMember(chatId, contactId)
+                        _userError.value = if (ok) {
+                            "Запрос отправлен админу"
+                        } else {
+                            "Не удалось отправить запрос (админа нет в контактах?)"
+                        }
+                    }
+                } finally {
+                    privateKey.fill(0)
+                }
+                refreshGroupMembers()
+            } catch (e: Exception) {
+                Log.e(TAG, "Ошибка добавления/запроса участника: ${e.message}", e)
+                _userError.value = "Не удалось: ${e.message}"
+            }
+        }
+    }
+
+    fun approveAddRequest(targetEmail: String) {
+        viewModelScope.launch {
+            try {
+                val (manager, privateKey) = buildManagerWithKey() ?: return@launch
+                try {
+                    manager.approveAddRequest(chatId, targetEmail)
+                    _userError.value = "Запрос одобрен"
+                } finally {
+                    privateKey.fill(0)
+                }
+                refreshGroupMembers()
+            } catch (e: Exception) {
+                Log.e(TAG, "Ошибка approve: ${e.message}", e)
+                _userError.value = "Не удалось одобрить: ${e.message}"
+            }
+        }
+    }
+
+    fun rejectAddRequest(targetEmail: String) {
+        viewModelScope.launch {
+            try {
+                val (manager, privateKey) = buildManagerWithKey() ?: return@launch
+                try {
+                    manager.rejectAddRequest(chatId, targetEmail)
+                    _userError.value = "Запрос отклонён"
+                } finally {
+                    privateKey.fill(0)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Ошибка reject: ${e.message}", e)
+                _userError.value = "Не удалось отклонить: ${e.message}"
             }
         }
     }
@@ -909,11 +1038,16 @@ class ChatViewModel(
         private val contactDao: ContactDao,
         private val sendQueueDao: SendQueueDao,
         private val keyStorage: SecureKeyStorage,
-        private val appContext: Context
+        private val appContext: Context,
+        private val myEmail: String = "",
+        private val pendingAddRequestDao: PendingAddRequestDao? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return ChatViewModel(chatId, messageDao, chatDao, contactDao, sendQueueDao, keyStorage, appContext) as T
+            return ChatViewModel(
+                chatId, messageDao, chatDao, contactDao, sendQueueDao,
+                keyStorage, appContext, myEmail, pendingAddRequestDao
+            ) as T
         }
     }
 

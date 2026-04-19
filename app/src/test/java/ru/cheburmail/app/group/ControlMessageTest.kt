@@ -111,6 +111,78 @@ class ControlMessageTest {
     }
 
     @Test
+    fun serialize_deserialize_memberAddRequest_withRequesterAndTarget() {
+        val original = ControlMessage(
+            type = ControlMessageType.MEMBER_ADD_REQUEST,
+            chatId = "chat-req",
+            groupName = "Группа",
+            members = listOf(
+                GroupMemberInfo("dave@mail.ru", "cHVia2V5RGF2ZQ==", "Dave")
+            ),
+            targetEmail = "dave@mail.ru",
+            requesterEmail = "alice@yandex.ru"
+        )
+
+        val restored = ControlMessage.fromJson(original.toJson())
+
+        assertEquals(ControlMessageType.MEMBER_ADD_REQUEST, restored.type)
+        assertEquals("dave@mail.ru", restored.targetEmail)
+        assertEquals("alice@yandex.ru", restored.requesterEmail)
+        assertEquals(1, restored.members.size)
+        assertEquals("dave@mail.ru", restored.members[0].email)
+    }
+
+    @Test
+    fun serialize_deserialize_memberAddApproved() {
+        val original = ControlMessage(
+            type = ControlMessageType.MEMBER_ADD_APPROVED,
+            chatId = "chat-app",
+            groupName = "Группа",
+            members = emptyList(),
+            targetEmail = "dave@mail.ru",
+            requesterEmail = "alice@yandex.ru"
+        )
+
+        val restored = ControlMessage.fromJson(original.toJson())
+
+        assertEquals(ControlMessageType.MEMBER_ADD_APPROVED, restored.type)
+        assertEquals("dave@mail.ru", restored.targetEmail)
+        assertEquals("alice@yandex.ru", restored.requesterEmail)
+    }
+
+    @Test
+    fun serialize_deserialize_memberAddRejected() {
+        val original = ControlMessage(
+            type = ControlMessageType.MEMBER_ADD_REJECTED,
+            chatId = "chat-rej",
+            groupName = "Группа",
+            members = emptyList(),
+            targetEmail = "dave@mail.ru",
+            requesterEmail = "alice@yandex.ru"
+        )
+
+        val restored = ControlMessage.fromJson(original.toJson())
+
+        assertEquals(ControlMessageType.MEMBER_ADD_REJECTED, restored.type)
+        assertEquals("dave@mail.ru", restored.targetEmail)
+        assertEquals("alice@yandex.ru", restored.requesterEmail)
+    }
+
+    @Test
+    fun serialize_groupInvite_omits_requesterEmail_when_null() {
+        val msg = ControlMessage(
+            type = ControlMessageType.GROUP_INVITE,
+            chatId = "chat-x",
+            groupName = "Группа",
+            members = emptyList()
+        )
+
+        val json = msg.toJson()
+        assertFalse("Не должно быть requesterEmail в GROUP_INVITE", json.contains("requesterEmail"))
+        assertNull(ControlMessage.fromJson(json).requesterEmail)
+    }
+
+    @Test
     fun groupMemberInfo_toJson_fromJson_roundTrip() {
         val original = GroupMemberInfo(
             email = "user@example.com",

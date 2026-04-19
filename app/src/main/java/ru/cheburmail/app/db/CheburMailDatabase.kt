@@ -1,15 +1,19 @@
 package ru.cheburmail.app.db
 
 import android.content.Context
+import android.util.Log
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
+import ru.cheburmail.app.storage.DbPassphraseStorage
 import ru.cheburmail.app.db.dao.ChatDao
 import ru.cheburmail.app.db.dao.ContactDao
 import ru.cheburmail.app.db.dao.MessageDao
+import ru.cheburmail.app.db.dao.PendingAddRequestDao
 import ru.cheburmail.app.db.dao.ProcessedKeyExchangeDao
 import ru.cheburmail.app.db.dao.SendQueueDao
 import ru.cheburmail.app.db.entity.ChatEntity
@@ -17,6 +21,7 @@ import ru.cheburmail.app.db.entity.ChatMemberEntity
 import ru.cheburmail.app.db.entity.ContactEntity
 import ru.cheburmail.app.db.entity.MessageEntity
 import ru.cheburmail.app.db.entity.DeletedMessageEntity
+import ru.cheburmail.app.db.entity.PendingAddRequestEntity
 import ru.cheburmail.app.db.entity.ProcessedKeyExchangeEntity
 import ru.cheburmail.app.db.entity.SendQueueEntity
 
@@ -28,9 +33,10 @@ import ru.cheburmail.app.db.entity.SendQueueEntity
         MessageEntity::class,
         SendQueueEntity::class,
         DeletedMessageEntity::class,
-        ProcessedKeyExchangeEntity::class
+        ProcessedKeyExchangeEntity::class,
+        PendingAddRequestEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -41,9 +47,39 @@ abstract class CheburMailDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
     abstract fun sendQueueDao(): SendQueueDao
     abstract fun processedKeyExchangeDao(): ProcessedKeyExchangeDao
+    abstract fun pendingAddRequestDao(): PendingAddRequestDao
 
     companion object {
         private const val DB_NAME = "cheburmail.db"
+
+        /**
+         * v8: добавление колонки chats.created_by (admin email, NULL для старых
+         * групп и direct-чатов) и таблицы pending_add_requests для approval-флоу
+         * добавления участников verified-не-админами.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE chats ADD COLUMN created_by TEXT DEFAULT NULL")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS pending_add_requests (
+                        chat_id TEXT NOT NULL,
+                        target_email TEXT NOT NULL,
+                        requester_email TEXT NOT NULL,
+                        target_public_key BLOB NOT NULL,
+                        target_display_name TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        PRIMARY KEY(chat_id, target_email),
+                        FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS idx_pending_add_at " +
+                        "ON pending_add_requests(created_at)"
+                )
+            }
+        }
 
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -108,21 +144,50 @@ abstract class CheburMailDatabase : RoomDatabase() {
             }
         }
 
+        private const val TAG = "CheburMailDatabase"
+
         @Volatile
         private var INSTANCE: CheburMailDatabase? = null
 
         fun getInstance(context: Context): CheburMailDatabase =
             INSTANCE ?: synchronized(this) {
-                INSTANCE ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    CheburMailDatabase::class.java,
-                    DB_NAME
-                )
-                    .addMigrations(
-                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
-                        MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7
-                    )
-                    .build().also { INSTANCE = it }
+                INSTANCE ?: buildEncrypted(context.applicationContext)
+                    .also { INSTANCE = it }
             }
+
+        private fun buildEncrypted(context: Context): CheburMailDatabase {
+            val passphrase = DbPassphraseStorage.getOrCreate(context)
+
+            // SQLCipher native libs: грузим ДО SupportOpenHelperFactory.
+            // Мигратор грузит свою копию только если миграция ещё нужна;
+            // после setMigrated=true этот путь не вызывается — Room бы
+            // открыл БД без нативки и упал UnsatisfiedLinkError.
+            System.loadLibrary("sqlcipher")
+
+            try {
+                DbCipherMigrator.migrateIfNeeded(context, passphrase)
+            } catch (e: Throwable) {
+                // Миграция упала — Room попробует открыть старый plaintext-файл
+                // с шифрованным ключом и тоже упадёт. Логируем и пробрасываем,
+                // приложение упадёт явно, бэкап `cheburmail.db.plaintext.bak`
+                // (если успел создаться) останется на диске для восстановления.
+                Log.e(TAG, "DbCipherMigrator failed; DB will likely fail to open", e)
+            }
+
+            val factory = SupportOpenHelperFactory(passphrase.toByteArray(Charsets.UTF_8))
+
+            return Room.databaseBuilder(
+                context,
+                CheburMailDatabase::class.java,
+                DB_NAME
+            )
+                .openHelperFactory(factory)
+                .addMigrations(
+                    MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
+                    MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
+                    MIGRATION_7_8
+                )
+                .build()
+        }
     }
 }

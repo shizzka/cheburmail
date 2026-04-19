@@ -9,10 +9,26 @@ import org.json.JSONObject
 enum class ControlMessageType {
     /** Приглашение в группу с полным списком участников и их ключами */
     GROUP_INVITE,
-    /** Уведомление о добавлении нового участника */
+    /** Уведомление о добавлении нового участника (broadcast от админа) */
     MEMBER_ADDED,
-    /** Уведомление об удалении участника */
-    MEMBER_REMOVED
+    /** Уведомление об удалении участника (broadcast от админа) */
+    MEMBER_REMOVED,
+    /**
+     * Запрос verified-не-админа на добавление участника. Адресован только
+     * админу группы (point-to-point). targetEmail = новый участник,
+     * requesterEmail = автор запроса.
+     */
+    MEMBER_ADD_REQUEST,
+    /**
+     * Ответ админа на MEMBER_ADD_REQUEST: запрос одобрен. Доставляется только
+     * автору запроса (requesterEmail), сам участник попадёт через MEMBER_ADDED.
+     */
+    MEMBER_ADD_APPROVED,
+    /**
+     * Ответ админа на MEMBER_ADD_REQUEST: запрос отклонён. Доставляется только
+     * автору запроса.
+     */
+    MEMBER_ADD_REJECTED
 }
 
 /**
@@ -52,14 +68,19 @@ data class GroupMemberInfo(
  * @param chatId ID группового чата
  * @param groupName название группы
  * @param members список участников с их публичными ключами
- * @param targetEmail email участника, которого касается действие (для MEMBER_ADDED/REMOVED)
+ * @param targetEmail email участника, которого касается действие
+ *   (MEMBER_ADDED/REMOVED/ADD_REQUEST/ADD_APPROVED/ADD_REJECTED)
+ * @param requesterEmail email автора MEMBER_ADD_REQUEST (требуется для
+ *   MEMBER_ADD_REQUEST/APPROVED/REJECTED, чтобы админ знал кому ответить
+ *   и админ-ответ был привязан к исходному запросу)
  */
 data class ControlMessage(
     val type: ControlMessageType,
     val chatId: String,
     val groupName: String,
     val members: List<GroupMemberInfo>,
-    val targetEmail: String? = null
+    val targetEmail: String? = null,
+    val requesterEmail: String? = null
 ) {
 
     /**
@@ -73,6 +94,7 @@ data class ControlMessage(
             members.forEach { put(it.toJson()) }
         })
         targetEmail?.let { put("targetEmail", it) }
+        requesterEmail?.let { put("requesterEmail", it) }
     }.toString()
 
     /**
@@ -102,14 +124,20 @@ data class ControlMessage(
                 GroupMemberInfo.fromJson(membersArray.getJSONObject(it))
             }
 
-            val targetEmail = obj.optString("targetEmail", null)
+            // optString(key, null) проблематичен: возвращает Java-null,
+            // Kotlin nullability теряет вывод. Делаем явно.
+            val targetEmail = if (obj.has("targetEmail") && !obj.isNull("targetEmail"))
+                obj.getString("targetEmail") else null
+            val requesterEmail = if (obj.has("requesterEmail") && !obj.isNull("requesterEmail"))
+                obj.getString("requesterEmail") else null
 
             return ControlMessage(
                 type = type,
                 chatId = chatId,
                 groupName = groupName,
                 members = members,
-                targetEmail = targetEmail
+                targetEmail = targetEmail,
+                requesterEmail = requesterEmail
             )
         }
 

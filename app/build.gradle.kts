@@ -37,8 +37,8 @@ android {
         applicationId = "ru.cheburmail.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.3.6"
+        versionCode = 13
+        versionName = "0.3.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -114,6 +114,7 @@ dependencies {
     // Room
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
+    implementation(libs.sqlcipher.android)
     ksp(libs.room.compiler)
 
     // DataStore

@@ -23,5 +23,13 @@ data class ChatEntity(
     val updatedAt: Long,
 
     @ColumnInfo(name = "disappear_timer_ms")
-    val disappearTimerMs: Long? = null
+    val disappearTimerMs: Long? = null,
+
+    /**
+     * Email создателя группы (admin). NULL для старых групп до MIGRATION_7_8 и для
+     * direct-чатов. Только этот email может одобрять MEMBER_ADD_REQUEST и напрямую
+     * добавлять/удалять участников.
+     */
+    @ColumnInfo(name = "created_by")
+    val createdBy: String? = null
 )

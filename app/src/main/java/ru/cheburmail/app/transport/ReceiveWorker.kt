@@ -21,6 +21,7 @@ import ru.cheburmail.app.messaging.ChatIdGenerator
 import ru.cheburmail.app.messaging.DeliveryReceiptHandler
 import ru.cheburmail.app.messaging.DeliveryReceiptSender
 import ru.cheburmail.app.messaging.KeyExchangeManager
+import ru.cheburmail.app.messaging.ReactiveKeyexGate
 import ru.cheburmail.app.notification.NotificationHelper
 
 /**
@@ -54,8 +55,35 @@ class ReceiveWorker(
     private val keyExchangeManager: KeyExchangeManager? = null,
     private val emailConfig: EmailConfig? = null,
     private val mediaDecryptor: MediaDecryptor? = null,
-    private val mediaFileManager: MediaFileManager? = null
+    private val mediaFileManager: MediaFileManager? = null,
+    private val reactiveKeyexGate: ReactiveKeyexGate? = null
 ) {
+
+    /**
+     * Реактивный keyex: B получил письмо от неизвестного A (контакт после
+     * reinstall пропал) → шлём свой pubkey, чтобы A обновил запись о B.
+     *
+     * Двухуровневая защита от спама — в [reactiveKeyexGate]: per-email 1ч +
+     * global 10/час. Само сообщение всё равно skip-аем: дешифровки всё равно
+     * не получится (оно зашифровано нашим старым pubkey), но keyex восстановит
+     * следующую отправку.
+     */
+    private suspend fun tryReactiveKeyex(fromEmail: String) {
+        val km = keyExchangeManager ?: return
+        val gate = reactiveKeyexGate ?: return
+        val cfg = emailConfig ?: return
+        if (!gate.shouldSend(fromEmail)) {
+            Log.d(TAG, "Reactive keyex gated for $fromEmail")
+            return
+        }
+        try {
+            km.sendKeyExchange(cfg, fromEmail)
+            gate.markSent(fromEmail)
+            Log.i(TAG, "Reactive keyex sent -> $fromEmail (unknown sender recovery)")
+        } catch (e: Exception) {
+            Log.w(TAG, "Reactive keyex failed -> $fromEmail: ${e.message}")
+        }
+    }
 
     /**
      * Wipe the private key from memory after use.
@@ -136,7 +164,13 @@ class ReceiveWorker(
                             contact.publicKey,
                             recipientPrivateKey
                         )
-                        controlMessageHandler?.handle(String(plaintext, Charsets.UTF_8))
+                        // fromEmail передаём в handler для admin/verified gating:
+                        // decrypt с ключом отправителя гарантирует authenticity
+                        // (не подделать) — handler доверяет этому полю.
+                        controlMessageHandler?.handle(
+                            String(plaintext, Charsets.UTF_8),
+                            msg.fromEmail
+                        )
                         Log.d(TAG, "Processed control message: ${msg.msgUuid}")
                     }
                     continue
@@ -152,6 +186,7 @@ class ReceiveWorker(
                 val contact = contactDao.getByEmail(msg.fromEmail)
                 if (contact == null) {
                     Log.w(TAG, "Unknown sender ${msg.fromEmail}, skipping message ${msg.msgUuid}")
+                    tryReactiveKeyex(msg.fromEmail)
                     continue
                 }
 
@@ -285,6 +320,7 @@ class ReceiveWorker(
                     val contact = contactDao.getByEmail(mediaMsg.fromEmail)
                     if (contact == null) {
                         Log.w(TAG, "Unknown sender ${mediaMsg.fromEmail}, skipping media ${mediaMsg.msgUuid}")
+                        tryReactiveKeyex(mediaMsg.fromEmail)
                         continue
                     }
 
