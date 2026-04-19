@@ -10,6 +10,7 @@ import ru.cheburmail.app.media.MediaDecryptor
 import ru.cheburmail.app.media.MediaFileManager
 import ru.cheburmail.app.messaging.KeyExchangeManager
 import ru.cheburmail.app.messaging.KeyexRateLimitStore
+import ru.cheburmail.app.messaging.ReactiveKeyexGate
 import ru.cheburmail.app.notification.NotificationHelper
 import ru.cheburmail.app.storage.SecureKeyStorage
 import ru.cheburmail.app.transport.EmailConfig
@@ -100,7 +101,8 @@ class SyncFactory(private val context: Context) {
             emailConfig = config,
             mediaDecryptor = mediaDecryptor,
             mediaFileManager = mediaFileManager,
-            controlMessageHandler = controlMessageHandler
+            controlMessageHandler = controlMessageHandler,
+            reactiveKeyexGate = ReactiveKeyexGate.sharedPrefs(context)
         )
     }
 
