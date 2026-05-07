@@ -144,13 +144,16 @@ class ReceiveWorker(
 
         for (msg in parsed) {
             try {
-                // Проверяем, является ли сообщение ACK (подтверждением доставки)
-                if (DeliveryReceiptSender.isAckSubject(
-                    "${EmailMessage.SUBJECT_PREFIX}${msg.chatId}/${msg.msgUuid}"
-                )) {
-                    val ackSubject = "${EmailMessage.SUBJECT_PREFIX}${msg.chatId}/${msg.msgUuid}"
-                    deliveryReceiptHandler?.handleAck(ackSubject)
-                    Log.d(TAG, "Processed ACK: ${msg.msgUuid}")
+                // ACK (delivery receipt) — отключён по дизайну (см. README).
+                // Раньше ACK определялся по subject без расшифровки/auth, что
+                // позволило бы любому отправителю подделать subject вида
+                // CM/1/<chat>/ack-<uuid> и пометить чужое сообщение как
+                // доставленное. Если эта функциональность когда-нибудь
+                // вернётся — она должна быть полноценным зашифрованным и
+                // аутентифицированным сообщением, не subject-only.
+                val fullSubjectForAck = "${EmailMessage.SUBJECT_PREFIX}${msg.chatId}/${msg.msgUuid}"
+                if (DeliveryReceiptSender.isAckSubject(fullSubjectForAck)) {
+                    Log.d(TAG, "ACK ${msg.msgUuid} ignored (feature disabled)")
                     continue
                 }
 

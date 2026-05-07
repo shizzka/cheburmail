@@ -10,11 +10,9 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import ru.cheburmail.app.db.CheburMailDatabase
+import ru.cheburmail.app.db.MessageStatus
+import ru.cheburmail.app.db.QueueStatus
 import ru.cheburmail.app.repository.AccountRepository
-import ru.cheburmail.app.transport.EmailFormatter
-import ru.cheburmail.app.transport.RetryStrategy
-import ru.cheburmail.app.transport.SendWorker
-import ru.cheburmail.app.transport.SmtpClient
 
 /**
  * OneTimeWork, запускаемый при появлении сетевого соединения.
@@ -42,12 +40,31 @@ class OutboxDrainWorker(
 
         val db = CheburMailDatabase.getInstance(applicationContext)
 
-        // Cleanup: delete queue entries with oversized BLOBs that crash CursorWindow
+        // Repair: queue entries с oversized BLOB (>1MB) — CursorWindow упадёт
+        // при чтении. Раньше делали silent DELETE, что приводило к молчаливой
+        // потере сообщений. Теперь: находим IDs, помечаем связанные messages
+        // как FAILED (видно юзеру), удаляем queue entry.
         try {
-            db.openHelper.writableDatabase.execSQL(
-                "DELETE FROM send_queue WHERE LENGTH(encrypted_payload) > 1000000 AND payload_file_path IS NULL"
+            val cursor = db.openHelper.writableDatabase.query(
+                "SELECT id, message_id FROM send_queue WHERE LENGTH(encrypted_payload) > 1000000 AND payload_file_path IS NULL"
             )
-        } catch (_: Exception) {}
+            val orphanIds = mutableListOf<Pair<Long, String>>()
+            cursor.use { c ->
+                while (c.moveToNext()) {
+                    orphanIds += c.getLong(0) to c.getString(1)
+                }
+            }
+            if (orphanIds.isNotEmpty()) {
+                Log.w(TAG, "Repair: обнаружено ${orphanIds.size} oversized queue entries — пометим связанные messages как FAILED")
+                for ((qId, msgId) in orphanIds) {
+                    db.sendQueueDao().updateStatus(qId, QueueStatus.FAILED)
+                    db.messageDao().updateStatus(msgId, MessageStatus.FAILED)
+                    Log.w(TAG, "Repair: message $msgId (queue $qId) → FAILED (oversized BLOB)")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Repair phase failed: ${e.message}")
+        }
 
         // Проверяем наличие элементов в очереди
         val pendingCount = db.sendQueueDao().countPending()
@@ -59,15 +76,11 @@ class OutboxDrainWorker(
         Log.i(TAG, "В очереди $pendingCount сообщений, отправляем...")
 
         try {
-            val sendWorker = SendWorker(
-                smtpClient = SmtpClient(),
-                emailFormatter = EmailFormatter(),
-                retryStrategy = RetryStrategy(),
-                sendQueueDao = db.sendQueueDao(),
-                messageDao = db.messageDao(),
-                contactDao = db.contactDao(),
-                emailConfig = config
-            )
+            // Используем единую фабрику чтобы получить multi-account fallback
+            // и health-tracking (раньше OutboxDrainWorker строил SendWorker
+            // напрямую и не имел fallback при SMTP-блокировке).
+            val syncFactory = SyncFactory(applicationContext)
+            val sendWorker = syncFactory.buildSendWorker(config)
 
             sendWorker.processQueue()
             Log.i(TAG, "Очередь обработана")
