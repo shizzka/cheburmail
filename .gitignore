@@ -45,3 +45,6 @@ CLAUDE.md
 .claude-flow/
 entities.json
 mempalace.yaml
+
+# claude-flow / ruflo runtime artifacts
+.swarm/

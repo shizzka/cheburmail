@@ -53,11 +53,13 @@ fun CredentialsScreen(
     val providerName = when (provider) {
         EmailProvider.YANDEX -> "Яндекс"
         EmailProvider.MAILRU -> "Mail.ru"
+        EmailProvider.RAMBLER -> "Rambler"
     }
 
     val emailHint = when (provider) {
         EmailProvider.YANDEX -> "user@yandex.ru"
         EmailProvider.MAILRU -> "user@mail.ru"
+        EmailProvider.RAMBLER -> "user@rambler.ru"
     }
 
     Scaffold(

@@ -157,7 +157,7 @@ class ReceiveWorker(
                 // Проверяем, является ли сообщение управляющим (групповые чаты)
                 val fullSubject = "${EmailMessage.SUBJECT_PREFIX}${msg.chatId}/${msg.msgUuid}"
                 if (ControlMessage.isControlSubject(fullSubject)) {
-                    val contact = contactDao.getByEmail(msg.fromEmail)
+                    val contact = contactDao.getByEmailOrAlias(msg.fromEmail)
                     if (contact != null) {
                         val plaintext = decryptor.decrypt(
                             msg.envelope,
@@ -183,7 +183,7 @@ class ReceiveWorker(
                 }
 
                 // Get sender's public key
-                val contact = contactDao.getByEmail(msg.fromEmail)
+                val contact = contactDao.getByEmailOrAlias(msg.fromEmail)
                 if (contact == null) {
                     Log.w(TAG, "Unknown sender ${msg.fromEmail}, skipping message ${msg.msgUuid}")
                     tryReactiveKeyex(msg.fromEmail)
@@ -317,7 +317,7 @@ class ReceiveWorker(
                         continue
                     }
 
-                    val contact = contactDao.getByEmail(mediaMsg.fromEmail)
+                    val contact = contactDao.getByEmailOrAlias(mediaMsg.fromEmail)
                     if (contact == null) {
                         Log.w(TAG, "Unknown sender ${mediaMsg.fromEmail}, skipping media ${mediaMsg.msgUuid}")
                         tryReactiveKeyex(mediaMsg.fromEmail)

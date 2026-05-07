@@ -6,14 +6,18 @@ import ru.cheburmail.app.crypto.MessageDecryptor
 import ru.cheburmail.app.crypto.MessageEncryptor
 import ru.cheburmail.app.crypto.NonceGenerator
 import ru.cheburmail.app.db.CheburMailDatabase
+import ru.cheburmail.app.account.MultiAccountManager
+import ru.cheburmail.app.account.SmtpHealthTracker
 import ru.cheburmail.app.media.MediaDecryptor
 import ru.cheburmail.app.media.MediaFileManager
 import ru.cheburmail.app.messaging.KeyExchangeManager
 import ru.cheburmail.app.messaging.KeyexRateLimitStore
 import ru.cheburmail.app.messaging.ReactiveKeyexGate
 import ru.cheburmail.app.notification.NotificationHelper
+import ru.cheburmail.app.repository.AccountRepository
 import ru.cheburmail.app.storage.SecureKeyStorage
 import ru.cheburmail.app.transport.EmailConfig
+import kotlinx.coroutines.flow.first
 import ru.cheburmail.app.transport.EmailFormatter
 import ru.cheburmail.app.transport.EmailParser
 import ru.cheburmail.app.transport.ImapClient
@@ -37,6 +41,22 @@ class SyncFactory(private val context: Context) {
 
     private val db: CheburMailDatabase by lazy { CheburMailDatabase.getInstance(context) }
     private val ls by lazy { CryptoProvider.lazySodium }
+
+    /**
+     * Singleton MultiAccountManager — общий для buildReceive/buildSendWorker
+     * чтобы health/rate-limit состояние шарилось между всеми воркерами этого
+     * процесса. Иначе у каждого воркера будет свой in-memory tracker и fallback
+     * не будет работать межпроцессно.
+     */
+    private val multiAccountManager: MultiAccountManager by lazy {
+        MultiAccountManager(
+            accountRepository = ru.cheburmail.app.repository.AccountRepository.create(context),
+            healthTracker = SmtpHealthTracker()
+        )
+    }
+
+    /** Доступ к MultiAccountManager для UI (отображение SMTP health). */
+    fun multiAccountManager(): MultiAccountManager = multiAccountManager
 
     /**
      * Собрать ReceiveWorker для текущего аккаунта.
@@ -70,6 +90,7 @@ class SyncFactory(private val context: Context) {
 
         val notifHelper = NotificationHelper(context)
 
+        val accountRepo = AccountRepository.create(context)
         val keyExchangeManager = KeyExchangeManager(
             smtpClient = smtpClient,
             contactDao = db.contactDao(),
@@ -77,7 +98,12 @@ class SyncFactory(private val context: Context) {
             notificationHelper = notifHelper,
             processedDao = db.processedKeyExchangeDao(),
             imapClient = imapClient,
-            rateLimitStore = KeyexRateLimitStore.sharedPrefs(context)
+            rateLimitStore = KeyexRateLimitStore.sharedPrefs(context),
+            aliasProvider = { myEmail ->
+                accountRepo.getAll().first()
+                    .map { it.email }
+                    .filter { !it.equals(myEmail, ignoreCase = true) }
+            }
         )
 
         val controlMessageHandler = ru.cheburmail.app.group.ControlMessageHandler(
@@ -108,8 +134,18 @@ class SyncFactory(private val context: Context) {
 
     /**
      * Собрать SendWorker для текущего аккаунта.
+     * Передаём общий [multiAccountManager] чтобы fallback на другие аккаунты
+     * при SMTP-блокировке работал.
      */
     fun buildSendWorker(config: EmailConfig): SendWorker {
+        // Снимок настройки авто-fallback: блокирующий read из DataStore
+        // (это вызов в context'е WorkManager-runtime, OK).
+        val autoFallback = runCatching {
+            kotlinx.coroutines.runBlocking {
+                ru.cheburmail.app.storage.AppSettings.getInstance(context)
+                    .autoFallbackEnabled.first()
+            }
+        }.getOrDefault(true)
         return SendWorker(
             smtpClient = SmtpClient(),
             emailFormatter = EmailFormatter(),
@@ -117,7 +153,9 @@ class SyncFactory(private val context: Context) {
             sendQueueDao = db.sendQueueDao(),
             messageDao = db.messageDao(),
             contactDao = db.contactDao(),
-            emailConfig = config
+            emailConfig = config,
+            multiAccountManager = multiAccountManager,
+            autoFallbackEnabled = autoFallback
         )
     }
 }

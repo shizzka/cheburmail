@@ -74,8 +74,16 @@ fun ProviderSelectScreen(
 
         ProviderCard(
             name = "Mail.ru",
-            domain = "@mail.ru",
+            domain = "@mail.ru / @bk.ru / @list.ru / @inbox.ru",
             onClick = { onProviderSelected(EmailProvider.MAILRU) }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        ProviderCard(
+            name = "Rambler",
+            domain = "@rambler.ru / @lenta.ru / @autorambler.ru",
+            onClick = { onProviderSelected(EmailProvider.RAMBLER) }
         )
     }
 }

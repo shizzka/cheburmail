@@ -85,12 +85,38 @@ fun ChatListScreen(
     onNewChat: () -> Unit,
     onContacts: () -> Unit,
     onQrCode: () -> Unit,
-    onSettings: () -> Unit = {}
+    onSettings: () -> Unit = {},
+    /**
+     * События отправки (fallback / all-failed). Если null — индикация выключена.
+     * Передаётся MultiAccountManager.events.
+     */
+    sendEvents: kotlinx.coroutines.flow.SharedFlow<ru.cheburmail.app.account.MultiAccountManager.SendEvent>? = null
 ) {
     val chats by viewModel.chats.collectAsState()
     val chatsLoaded by viewModel.chatsLoaded.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
     var chatToDelete by remember { mutableStateOf<ChatWithLastMessage?>(null) }
+    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
+
+    // Подписка на send events: показ snackbar при fallback / all-failed.
+    if (sendEvents != null) {
+        LaunchedEffect(sendEvents) {
+            sendEvents.collect { event ->
+                when (event) {
+                    is ru.cheburmail.app.account.MultiAccountManager.SendEvent.FallbackUsed -> {
+                        snackbarHostState.showSnackbar(
+                            "Отправлено через ${event.fallbackAccount} (SMTP ${event.originalAccount} заблокирован)"
+                        )
+                    }
+                    is ru.cheburmail.app.account.MultiAccountManager.SendEvent.AllAccountsFailed -> {
+                        snackbarHostState.showSnackbar(
+                            "Не удалось отправить: SMTP всех аккаунтов недоступен. Включи VPN или подожди."
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     // Проверка обновлений
     val context = LocalContext.current
@@ -159,7 +185,8 @@ fun ChatListScreen(
                     contentDescription = "Новый чат"
                 )
             }
-        }
+        },
+        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         Column(
             modifier = Modifier

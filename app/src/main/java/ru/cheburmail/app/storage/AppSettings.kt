@@ -31,6 +31,7 @@ class AppSettings private constructor(private val context: Context) {
         val BACKGROUND_SYNC_INTERVAL_MIN = longPreferencesKey("background_sync_interval_min")
         val SCREENSHOTS_BLOCKED = booleanPreferencesKey("screenshots_blocked")
         val IMAP_AUTO_CLEANUP = booleanPreferencesKey("imap_auto_cleanup")
+        val AUTO_FALLBACK_ENABLED = booleanPreferencesKey("auto_fallback_enabled")
     }
 
     // ── Значения по умолчанию ─────────────────────────────────────────────
@@ -122,5 +123,15 @@ class AppSettings private constructor(private val context: Context) {
 
     suspend fun setImapAutoCleanup(enabled: Boolean) {
         ds.edit { it[Keys.IMAP_AUTO_CLEANUP] = enabled }
+    }
+
+    // ── Авто-fallback на другой аккаунт при SMTP-блокировке ──────────────
+
+    val autoFallbackEnabled: Flow<Boolean> = ds.data.map {
+        it[Keys.AUTO_FALLBACK_ENABLED] ?: true // ON по умолчанию
+    }
+
+    suspend fun setAutoFallbackEnabled(enabled: Boolean) {
+        ds.edit { it[Keys.AUTO_FALLBACK_ENABLED] = enabled }
     }
 }

@@ -1,0 +1,96 @@
+package ru.cheburmail.app.account
+
+import android.util.Log
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * Отслеживает здоровье SMTP-эндпойнтов per-account.
+ *
+ * Работает в паре с [MultiAccountManager]: при отправке через аккаунт получаем
+ * успех или [TransportException.SmtpException] — фиксируем здесь. При выборе
+ * следующего аккаунта пропускаем «больные» (failed_at < now - QUARANTINE_MS).
+ *
+ * In-memory, сбрасывается при рестарте процесса. Это намеренно — после
+ * рестарта мы хотим заново попробовать все аккаунты, не наследуя fail-кеш
+ * (TSPU-фильтрация может закончиться).
+ */
+class SmtpHealthTracker(
+    private val quarantineMs: Long = DEFAULT_QUARANTINE_MS,
+    private val clock: () -> Long = System::currentTimeMillis
+) {
+
+    private data class AccountHealth(
+        val lastFailAt: AtomicLong = AtomicLong(0),
+        val lastOkAt: AtomicLong = AtomicLong(0),
+        val consecutiveFails: AtomicLong = AtomicLong(0)
+    )
+
+    private val state = ConcurrentHashMap<String, AccountHealth>()
+
+    /** Зарегистрировать успешную отправку через аккаунт. Сбрасывает карантин. */
+    fun recordOk(email: String) {
+        val h = stateFor(email)
+        h.lastOkAt.set(clock())
+        h.consecutiveFails.set(0)
+    }
+
+    /**
+     * Зарегистрировать SMTP-фейл аккаунта. Будет skip'аться [quarantineMs]
+     * после fail'а. Каждый последующий consecutive fail увеличивает карантин
+     * экспоненциально, до [MAX_QUARANTINE_MS] (защита от ретрай-шторма).
+     */
+    fun recordFail(email: String) {
+        val h = stateFor(email)
+        h.lastFailAt.set(clock())
+        val n = h.consecutiveFails.incrementAndGet()
+        Log.w(TAG, "SMTP fail #$n для $email — карантин ${effectiveQuarantine(n) / 1000}с")
+    }
+
+    /**
+     * true если аккаунт сейчас «здоров» (нет недавнего fail'а или карантин
+     * прошёл). Для аккаунта без записей — true (оптимистично, попробуем).
+     */
+    fun isHealthy(email: String): Boolean {
+        val h = state[email] ?: return true
+        val fails = h.consecutiveFails.get()
+        if (fails == 0L) return true
+        val sinceFail = clock() - h.lastFailAt.get()
+        return sinceFail >= effectiveQuarantine(fails)
+    }
+
+    /**
+     * Сколько секунд ещё в карантине. 0 если здоров. Для UI/логов.
+     */
+    fun quarantineRemainingMs(email: String): Long {
+        val h = state[email] ?: return 0
+        val fails = h.consecutiveFails.get()
+        if (fails == 0L) return 0
+        val remaining = effectiveQuarantine(fails) - (clock() - h.lastFailAt.get())
+        return remaining.coerceAtLeast(0)
+    }
+
+    /** Полный сброс — для тестов. */
+    fun reset() {
+        state.clear()
+    }
+
+    private fun stateFor(email: String): AccountHealth =
+        state.getOrPut(email) { AccountHealth() }
+
+    private fun effectiveQuarantine(consecutiveFails: Long): Long {
+        // Экспоненциальный backoff: base * 2^(n-1), capped.
+        val multiplier = 1L shl ((consecutiveFails - 1).coerceIn(0, 6).toInt())
+        return (quarantineMs * multiplier).coerceAtMost(MAX_QUARANTINE_MS)
+    }
+
+    companion object {
+        private const val TAG = "SmtpHealthTracker"
+
+        /** Базовый карантин: 5 минут. После N consecutive fails — экспонента. */
+        const val DEFAULT_QUARANTINE_MS = 5 * 60 * 1000L
+
+        /** Потолок: после 7+ fails не штрафуем больше 1 часа. */
+        const val MAX_QUARANTINE_MS = 60 * 60 * 1000L
+    }
+}

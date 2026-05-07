@@ -17,5 +17,11 @@ enum class EmailProvider(
         smtpPort = 465,
         imapHost = "imap.mail.ru",
         imapPort = 993
+    ),
+    RAMBLER(
+        smtpHost = "smtp.rambler.ru",
+        smtpPort = 465,
+        imapHost = "imap.rambler.ru",
+        imapPort = 993
     )
 }

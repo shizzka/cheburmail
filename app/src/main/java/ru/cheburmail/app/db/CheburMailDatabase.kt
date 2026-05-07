@@ -18,6 +18,7 @@ import ru.cheburmail.app.db.dao.ProcessedKeyExchangeDao
 import ru.cheburmail.app.db.dao.SendQueueDao
 import ru.cheburmail.app.db.entity.ChatEntity
 import ru.cheburmail.app.db.entity.ChatMemberEntity
+import ru.cheburmail.app.db.entity.ContactAliasEntity
 import ru.cheburmail.app.db.entity.ContactEntity
 import ru.cheburmail.app.db.entity.MessageEntity
 import ru.cheburmail.app.db.entity.DeletedMessageEntity
@@ -28,6 +29,7 @@ import ru.cheburmail.app.db.entity.SendQueueEntity
 @Database(
     entities = [
         ContactEntity::class,
+        ContactAliasEntity::class,
         ChatEntity::class,
         ChatMemberEntity::class,
         MessageEntity::class,
@@ -36,7 +38,7 @@ import ru.cheburmail.app.db.entity.SendQueueEntity
         ProcessedKeyExchangeEntity::class,
         PendingAddRequestEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -51,6 +53,48 @@ abstract class CheburMailDatabase : RoomDatabase() {
 
     companion object {
         private const val DB_NAME = "cheburmail.db"
+
+        /**
+         * v9: multi-email identity. Таблица contact_aliases связывает один
+         * pub_key (= один ContactEntity) с N email-адресами. При миграции
+         * существующий contacts.email копируется как первый PRIMARY-алиас,
+         * чтобы единый matcher по contact_aliases.email работал для всех
+         * (старые контакты тоже находятся через JOIN, не только через
+         * contacts.email).
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS contact_aliases (
+                        contact_id INTEGER NOT NULL,
+                        email TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        added_at INTEGER NOT NULL,
+                        PRIMARY KEY(contact_id, email),
+                        FOREIGN KEY(contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_contact_aliases_email " +
+                        "ON contact_aliases(email)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_contact_aliases_contact_id " +
+                        "ON contact_aliases(contact_id)"
+                )
+                // Бэкфилл существующих контактов: их primary email становится
+                // первым PRIMARY-алиасом. created_at используем как added_at,
+                // чтобы сохранить порядок «когда узнали этот email».
+                db.execSQL(
+                    """
+                    INSERT OR IGNORE INTO contact_aliases (contact_id, email, source, added_at)
+                    SELECT id, email, 'PRIMARY', created_at FROM contacts
+                    """.trimIndent()
+                )
+            }
+        }
 
         /**
          * v8: добавление колонки chats.created_by (admin email, NULL для старых
@@ -185,7 +229,7 @@ abstract class CheburMailDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
                     MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-                    MIGRATION_7_8
+                    MIGRATION_7_8, MIGRATION_8_9
                 )
                 .build()
         }

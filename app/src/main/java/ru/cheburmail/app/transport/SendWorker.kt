@@ -37,7 +37,12 @@ class SendWorker(
     private val messageDao: MessageDao,
     private val contactDao: ContactDao,
     private val emailConfig: EmailConfig,
-    private val multiAccountManager: MultiAccountManager? = null
+    private val multiAccountManager: MultiAccountManager? = null,
+    /**
+     * Если false — отключаем авто-fallback на другой аккаунт при SMTP-фейле.
+     * Юзер может выключить через настройки. Default=true.
+     */
+    private val autoFallbackEnabled: Boolean = true
 ) {
 
     /**
@@ -79,7 +84,7 @@ class SendWorker(
                 return
             }
 
-            // Выбираем аккаунт: мульти-аккаунт (round-robin) или одиночный
+            // Выбираем аккаунт: мульти-аккаунт (с учётом health) или одиночный
             val sendConfig = multiAccountManager?.getNextSendAccount() ?: emailConfig
 
             // Load payload: from file (large media) or from DB BLOB (text / small media)
@@ -148,8 +153,9 @@ class SendWorker(
                 try { java.io.File(entry.payloadFilePath).delete() } catch (_: Exception) {}
             }
 
-            // Фиксируем отправку для rate limit tracking
+            // Фиксируем отправку для rate limit tracking + здоровье аккаунта
             multiAccountManager?.recordSend(sendConfig.email)
+            multiAccountManager?.health()?.recordOk(sendConfig.email)
 
             // Success
             sendQueueDao.updateStatus(entry.id, QueueStatus.SENT)
@@ -169,12 +175,118 @@ class SendWorker(
             sendQueueDao.updateStatus(entry.id, QueueStatus.FAILED)
 
         } catch (e: TransportException.SmtpException) {
-            // SMTP errors are retryable
-            handleRetry(entry, e)
+            // Health-aware fallback: маркируем sendConfig как sick, пробуем
+            // другой аккаунт ПРЯМО СЕЙЧАС (без retry-delay). Если успех —
+            // мы уже отправили в catch-блоке. Если нет — обычный handleRetry.
+            val sentByFallback = tryImmediateFallback(entry, e)
+            if (!sentByFallback) {
+                handleRetry(entry, e)
+            }
 
         } catch (e: Exception) {
             // Unexpected errors — treat as retryable
             handleRetry(entry, e)
+        }
+    }
+
+    /**
+     * При SMTP-фейле — мгновенный fallback на другой здоровый аккаунт.
+     * Возвращает true если сообщение всё-таки отправлено (через альтернативу).
+     * Использует [MultiAccountManager.getNextSendAccount(exclude)] чтобы
+     * исключить текущий упавший аккаунт.
+     */
+    private suspend fun tryImmediateFallback(
+        entry: SendQueueEntity,
+        originalError: TransportException.SmtpException
+    ): Boolean {
+        val mam = multiAccountManager ?: return false
+        // Отметим текущий emailConfig как sick для будущих писем тоже
+        mam.health().recordFail(emailConfig.email)
+        Log.w(TAG, "SMTP fail для ${emailConfig.email}: ${originalError.message} — пробуем fallback")
+
+        // Глобальный rubber-cheque: если auto-fallback отключён — не пробуем
+        if (!autoFallbackEnabled) {
+            Log.d(TAG, "Auto-fallback отключён в настройках, пропускаем")
+            return false
+        }
+
+        val fallback = mam.getNextSendAccount(exclude = setOf(emailConfig.email))
+            ?: run {
+                Log.w(TAG, "Fallback недоступен — нет других здоровых аккаунтов")
+                mam.emit(ru.cheburmail.app.account.MultiAccountManager.SendEvent.AllAccountsFailed(
+                    originalAccount = emailConfig.email,
+                    reason = originalError.message ?: "SMTP fail"
+                ))
+                return false
+            }
+
+        return try {
+            val message = messageDao.getByIdOnce(entry.messageId) ?: return false
+            val contact = contactDao.getByEmail(entry.recipientEmail) ?: return false
+            val payload = if (entry.payloadFilePath != null) {
+                java.io.File(entry.payloadFilePath).readBytes()
+            } else {
+                entry.encryptedPayload
+            }
+            // Используем тот же путь форматирования, но fromEmail = fallback.email.
+            // Текстовое сообщение — простой envelope; медиа — meta+payload.
+            if (message.mediaType != ru.cheburmail.app.db.MediaType.NONE && payload.size > 4) {
+                val metaLen = ((payload[0].toInt() and 0xff) shl 24) or
+                    ((payload[1].toInt() and 0xff) shl 16) or
+                    ((payload[2].toInt() and 0xff) shl 8) or
+                    (payload[3].toInt() and 0xff)
+                if (metaLen > 0 && 4 + metaLen < payload.size) {
+                    val metaBytes = payload.copyOfRange(4, 4 + metaLen)
+                    val payloadBytes = payload.copyOfRange(4 + metaLen, payload.size)
+                    val metaEnv = ru.cheburmail.app.crypto.model.EncryptedEnvelope.fromBytes(metaBytes)
+                    val payloadEnv = ru.cheburmail.app.crypto.model.EncryptedEnvelope.fromBytes(payloadBytes)
+                    val emailMessage = emailFormatter.formatMedia(
+                        metadataEnvelope = metaEnv,
+                        payloadEnvelope = payloadEnv,
+                        chatId = message.chatId,
+                        msgUuid = message.id,
+                        fromEmail = fallback.email,
+                        toEmail = entry.recipientEmail
+                    )
+                    smtpClient.sendWithAttachment(fallback, emailMessage)
+                } else {
+                    val env = ru.cheburmail.app.crypto.model.EncryptedEnvelope.fromBytes(payload)
+                    val emailMessage = emailFormatter.format(
+                        envelope = env, chatId = message.chatId, msgUuid = message.id,
+                        fromEmail = fallback.email, toEmail = entry.recipientEmail
+                    )
+                    smtpClient.send(fallback, emailMessage)
+                }
+            } else {
+                val env = ru.cheburmail.app.crypto.model.EncryptedEnvelope.fromBytes(payload)
+                val emailMessage = emailFormatter.format(
+                    envelope = env, chatId = message.chatId, msgUuid = message.id,
+                    fromEmail = fallback.email, toEmail = entry.recipientEmail
+                )
+                smtpClient.send(fallback, emailMessage)
+            }
+            // Успех! Чистим payload-file, маркируем SENT.
+            if (entry.payloadFilePath != null) {
+                try { java.io.File(entry.payloadFilePath).delete() } catch (_: Exception) {}
+            }
+            mam.recordSend(fallback.email)
+            mam.health().recordOk(fallback.email)
+            sendQueueDao.updateStatus(entry.id, ru.cheburmail.app.db.QueueStatus.SENT)
+            messageDao.updateStatus(entry.messageId, ru.cheburmail.app.db.MessageStatus.SENT)
+            Log.i(TAG, "Сообщение ${entry.messageId} отправлено через fallback ${fallback.email}")
+            mam.emit(ru.cheburmail.app.account.MultiAccountManager.SendEvent.FallbackUsed(
+                originalAccount = emailConfig.email,
+                fallbackAccount = fallback.email,
+                reason = originalError.message ?: "SMTP fail"
+            ))
+            true
+        } catch (e: TransportException.SmtpException) {
+            mam.health().recordFail(fallback.email)
+            Log.w(TAG, "Fallback ${fallback.email} тоже упал: ${e.message}")
+            false
+        } catch (e: Exception) {
+            Log.w(TAG, "Fallback ${fallback.email} упал с unexpected error: ${e.message}")
+            false
         }
     }
 

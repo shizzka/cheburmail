@@ -78,6 +78,7 @@ fun AppPasswordGuideScreen(
             when (provider) {
                 EmailProvider.YANDEX -> YandexGuide()
                 EmailProvider.MAILRU -> MailRuGuide()
+                EmailProvider.RAMBLER -> RamblerGuide()
             }
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -132,6 +133,24 @@ private fun MailRuGuide() {
     Text(
         text = "Важно: Убедитесь, что в настройках почты разрешён доступ " +
             "по протоколам IMAP и SMTP (раздел \"Почтовые программы\").",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+@Composable
+private fun RamblerGuide() {
+    GuideTitle("Доступ к Rambler-почте")
+
+    GuideStep(1, "Откройте mail.rambler.ru и войдите в аккаунт")
+    GuideStep(2, "Перейдите в \"Настройки\" -> \"Безопасность\"")
+    GuideStep(3, "Включите доступ по протоколам IMAP и SMTP")
+    GuideStep(4, "Используйте основной пароль аккаунта (Rambler не поддерживает отдельные пароли приложений)")
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    Text(
+        text = "Важно: Если основной пароль не подходит — попробуйте сменить его в настройках безопасности и убедитесь, что доступ по IMAP/SMTP включён.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )

@@ -142,6 +142,15 @@ class GroupMessageSenderTest {
         override suspend fun update(contact: ContactEntity) { contacts[contact.id] = contact }
         override suspend fun delete(contact: ContactEntity) { contacts.remove(contact.id) }
         override suspend fun deleteById(id: Long) { contacts.remove(id) }
+        override suspend fun getByEmailOrAlias(email: String) = getByEmail(email)
+        override suspend fun getByPublicKey(publicKey: ByteArray) =
+            contacts.values.find { it.publicKey.contentEquals(publicKey) }
+        override suspend fun insertAlias(alias: ru.cheburmail.app.db.entity.ContactAliasEntity): Long = 0L
+        override suspend fun getAliases(contactId: Long): List<ru.cheburmail.app.db.entity.ContactAliasEntity> = emptyList()
+        override suspend fun getAliasEmails(contactId: Long): List<String> = emptyList()
+        override suspend fun getAliasByEmail(email: String): ru.cheburmail.app.db.entity.ContactAliasEntity? = null
+        override suspend fun deleteAlias(contactId: Long, email: String) {}
+
     }
 
     private class FakeMessageDao : ru.cheburmail.app.db.dao.MessageDao {

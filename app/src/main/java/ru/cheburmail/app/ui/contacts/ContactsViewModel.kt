@@ -36,6 +36,10 @@ class ContactsViewModel(
     private val _selectedContact = MutableStateFlow<ContactEntity?>(null)
     val selectedContact: StateFlow<ContactEntity?> = _selectedContact.asStateFlow()
 
+    private val _selectedContactAliases = MutableStateFlow<List<String>>(emptyList())
+    /** Email-алиасы выбранного контакта (без primary email). */
+    val selectedContactAliases: StateFlow<List<String>> = _selectedContactAliases.asStateFlow()
+
     private val _safetyNumber = MutableStateFlow<String?>(null)
     val safetyNumber: StateFlow<String?> = _safetyNumber.asStateFlow()
 
@@ -51,6 +55,7 @@ class ContactsViewModel(
     fun selectContact(contact: ContactEntity) {
         _selectedContact.value = contact
         _safetyNumber.value = null
+        _selectedContactAliases.value = emptyList()
 
         viewModelScope.launch {
             val localKey = keyStorage.getPublicKey()
@@ -59,12 +64,18 @@ class ContactsViewModel(
                     localKey, contact.publicKey
                 )
             }
+            // Загружаем все алиасы кроме primary email — primary показываем
+            // отдельно как «Email».
+            val all = contactDao.getAliasEmails(contact.id)
+            _selectedContactAliases.value = all
+                .filter { !it.equals(contact.email, ignoreCase = true) }
         }
     }
 
     fun clearSelection() {
         _selectedContact.value = null
         _safetyNumber.value = null
+        _selectedContactAliases.value = emptyList()
     }
 
     /**
@@ -104,7 +115,32 @@ class ContactsViewModel(
                     updatedAt = now
                 )
 
-                contactDao.insert(contact)
+                val newId = contactDao.insert(contact)
+                // Регистрируем primary email + алиасы из QR в contact_aliases
+                // (для unified matcher по любому из адресов).
+                runCatching {
+                    contactDao.insertAlias(
+                        ru.cheburmail.app.db.entity.ContactAliasEntity(
+                            contactId = newId,
+                            email = qrData.email,
+                            source = ru.cheburmail.app.db.entity.ContactAliasEntity.SOURCE_PRIMARY,
+                            addedAt = now
+                        )
+                    )
+                }
+                for (aliasEmail in qrData.aliases) {
+                    runCatching {
+                        contactDao.insertAlias(
+                            ru.cheburmail.app.db.entity.ContactAliasEntity(
+                                contactId = newId,
+                                email = aliasEmail,
+                                // QR — личная встреча, считаем алиасы доверенными
+                                source = ru.cheburmail.app.db.entity.ContactAliasEntity.SOURCE_LEARNED,
+                                addedAt = now
+                            )
+                        )
+                    }
+                }
                 _addContactSuccess.value = true
             } catch (e: QrCodeParser.QrParseException) {
                 _addContactError.value = e.message ?: "Ошибка чтения QR-кода"

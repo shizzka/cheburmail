@@ -380,6 +380,15 @@ class ReceiveWorkerTest {
         override suspend fun delete(contact: ContactEntity) {}
         override suspend fun deleteById(id: Long) {}
         override suspend fun getAllOnce(): List<ContactEntity> = contacts.values.toList()
+        override suspend fun getByEmailOrAlias(email: String) = getByEmail(email)
+        override suspend fun getByPublicKey(publicKey: ByteArray) =
+            contacts.values.find { it.publicKey.contentEquals(publicKey) }
+        override suspend fun insertAlias(alias: ru.cheburmail.app.db.entity.ContactAliasEntity): Long = 0L
+        override suspend fun getAliases(contactId: Long): List<ru.cheburmail.app.db.entity.ContactAliasEntity> = emptyList()
+        override suspend fun getAliasEmails(contactId: Long): List<String> = emptyList()
+        override suspend fun getAliasByEmail(email: String): ru.cheburmail.app.db.entity.ContactAliasEntity? = null
+        override suspend fun deleteAlias(contactId: Long, email: String) {}
+
     }
 
     private class FakeBoxNative : com.goterl.lazysodium.interfaces.Box.Native {

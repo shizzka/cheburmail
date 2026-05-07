@@ -1,6 +1,10 @@
 package ru.cheburmail.app.account
 
 import android.util.Log
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.first
 import ru.cheburmail.app.repository.AccountRepository
 import ru.cheburmail.app.transport.EmailConfig
@@ -14,65 +18,104 @@ import ru.cheburmail.app.transport.EmailConfig
  * - Rate limit tracking per-account
  */
 class MultiAccountManager(
-    private val accountRepository: AccountRepository,
-    private val rateLimitTracker: RateLimitTracker = RateLimitTracker()
+    /** Источник списка аккаунтов. В проде — AccountRepository.getAll().first() */
+    private val accountSource: suspend () -> List<EmailConfig>,
+    private val rateLimitTracker: RateLimitTracker = RateLimitTracker(),
+    private val healthTracker: SmtpHealthTracker = SmtpHealthTracker()
 ) {
 
+    /** Конструктор для прода — оборачивает AccountRepository в accountSource. */
+    constructor(
+        accountRepository: AccountRepository,
+        rateLimitTracker: RateLimitTracker = RateLimitTracker(),
+        healthTracker: SmtpHealthTracker = SmtpHealthTracker()
+    ) : this(
+        accountSource = { accountRepository.getAll().first() },
+        rateLimitTracker = rateLimitTracker,
+        healthTracker = healthTracker
+    )
+
     private var lastUsedIndex = -1
+
+    /** Доступ к health-трекеру — для интеграции SendWorker и UI. */
+    fun health(): SmtpHealthTracker = healthTracker
+
+    /**
+     * События отправки — для snackbar и UI-индикаторов. Replay=0,
+     * extraBufferCapacity=8 (DROP_OLDEST) чтобы не блокировать SendWorker
+     * если UI отвалился.
+     */
+    private val _events = MutableSharedFlow<SendEvent>(
+        replay = 0,
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val events: SharedFlow<SendEvent> = _events.asSharedFlow()
+
+    /** Эмитит событие. Вызывается из SendWorker. */
+    fun emit(event: SendEvent) {
+        _events.tryEmit(event)
+    }
+
+    sealed class SendEvent {
+        /** Сработал авто-fallback с одного аккаунта на другой. */
+        data class FallbackUsed(
+            val originalAccount: String,
+            val fallbackAccount: String,
+            val reason: String
+        ) : SendEvent()
+
+        /** Все аккаунты больны — отправка не прошла даже через fallback. */
+        data class AllAccountsFailed(val originalAccount: String, val reason: String) : SendEvent()
+    }
 
     /**
      * Получить список всех аккаунтов.
      */
     suspend fun getAccounts(): List<EmailConfig> {
-        return accountRepository.getAll().first()
+        return accountSource()
     }
 
     /**
-     * Добавить новый аккаунт.
-     */
-    suspend fun addAccount(config: EmailConfig) {
-        accountRepository.save(config)
-        Log.i(TAG, "Аккаунт ${config.email} добавлен")
-    }
-
-    /**
-     * Удалить аккаунт.
-     */
-    suspend fun removeAccount(email: String) {
-        accountRepository.delete(email)
-        Log.i(TAG, "Аккаунт $email удалён")
-    }
-
-    /**
-     * Получить следующий аккаунт для отправки (round-robin с учётом rate limit).
+     * Получить следующий аккаунт для отправки.
      *
-     * Алгоритм:
-     * 1. Получить список всех аккаунтов
-     * 2. Найти аккаунт с наименьшим использованием, который не превысил лимит
-     * 3. Если все превысили лимит — вернуть null
+     * Алгоритм (по убыванию приоритета):
+     * 1. Отфильтровать аккаунты, не превысившие rate limit (`canSend`).
+     * 2. Из оставшихся отфильтровать «здоровые» (`healthTracker.isHealthy`),
+     *    т.е. без недавнего SMTP-фейла или с истёкшим карантином.
+     * 3. Из здоровых выбрать с минимальным rate-limit-счётчиком.
+     * 4. Если здоровых нет — берём наименее «больного» (с истекающим карантином),
+     *    чтобы не блокировать отправку полностью при глобальной блокировке.
      *
-     * @return EmailConfig для отправки или null если нет доступных аккаунтов
+     * @param exclude email, которые НЕ подходят (например, primary только что
+     *   упал — pop'аем со списка для немедленного fallback'а).
      */
-    suspend fun getNextSendAccount(): EmailConfig? {
-        val accounts = getAccounts()
+    suspend fun getNextSendAccount(exclude: Set<String> = emptySet()): EmailConfig? {
+        val accounts = getAccounts().filter { it.email !in exclude }
         if (accounts.isEmpty()) {
-            Log.w(TAG, "Нет доступных аккаунтов для отправки")
+            Log.w(TAG, "Нет доступных аккаунтов для отправки (exclude=$exclude)")
             return null
         }
 
-        // Стратегия: выбрать аккаунт с минимальным использованием
-        val emails = accounts.map { it.email }
-        val bestEmail = rateLimitTracker.getLeastUsed(emails)
-
-        if (bestEmail == null) {
+        val rateOk = accounts.filter { rateLimitTracker.canSend(it.email) }
+        if (rateOk.isEmpty()) {
             Log.w(TAG, "Все аккаунты превысили лимит отправки")
             return null
         }
 
-        val config = accounts.find { it.email == bestEmail }
-        Log.d(TAG, "Выбран аккаунт для отправки: $bestEmail " +
-            "(использование: ${rateLimitTracker.getCount(bestEmail)})")
-        return config
+        val healthy = rateOk.filter { healthTracker.isHealthy(it.email) }
+        val pool = healthy.ifEmpty {
+            Log.w(TAG, "Нет здоровых аккаунтов, fallback на наименее больной")
+            rateOk.sortedBy { healthTracker.quarantineRemainingMs(it.email) }
+        }
+
+        val best = pool.minByOrNull { rateLimitTracker.getCount(it.email) }
+        if (best != null) {
+            Log.d(TAG, "Выбран аккаунт для отправки: ${best.email} " +
+                "(rate=${rateLimitTracker.getCount(best.email)}, " +
+                "healthy=${healthTracker.isHealthy(best.email)})")
+        }
+        return best
     }
 
     /**

@@ -44,17 +44,18 @@ import ru.cheburmail.app.storage.SecureKeyStorage
 fun QrCodeScreen(
     keyStorage: SecureKeyStorage,
     email: String,
+    aliases: List<String> = emptyList(),
     onBack: () -> Unit
 ) {
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember { mutableStateOf(true) }
 
-    LaunchedEffect(email) {
+    LaunchedEffect(email, aliases) {
         isLoading = true
         try {
             val keyPair = keyStorage.getOrCreateKeyPair()
             qrBitmap = withContext(Dispatchers.Default) {
-                QrCodeGenerator.generate(keyPair.publicKey, email)
+                QrCodeGenerator.generate(keyPair.publicKey, email, aliases)
             }
         } catch (_: Exception) {
             qrBitmap = null

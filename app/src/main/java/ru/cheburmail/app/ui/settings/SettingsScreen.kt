@@ -64,6 +64,7 @@ import androidx.biometric.BiometricManager
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     onAddAccount: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
     onBack: () -> Unit
 ) {
     val accounts by viewModel.accounts.collectAsState()
@@ -75,6 +76,7 @@ fun SettingsScreen(
     val screenshotsBlocked by viewModel.screenshotsBlocked.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val imapAutoCleanup by viewModel.imapAutoCleanup.collectAsState()
+    val autoFallbackEnabled by viewModel.autoFallbackEnabled.collectAsState()
     val clearingImap by viewModel.clearingImap.collectAsState()
     val imapClearResult by viewModel.imapClearResult.collectAsState()
 
@@ -207,6 +209,7 @@ fun SettingsScreen(
             items(accounts, key = { it.email }) { account ->
                 AccountRow(
                     account = account,
+                    health = viewModel.smtpHealthSnapshot(account.email),
                     onDelete = { showDeleteDialog = account.email }
                 )
             }
@@ -218,6 +221,15 @@ fun SettingsScreen(
                 ) {
                     Text("Добавить аккаунт")
                 }
+            }
+
+            item {
+                SwitchRow(
+                    title = "Авто-fallback при блокировке",
+                    subtitle = "Если SMTP одного провайдера заблокирован, отправлять через другой ваш аккаунт автоматически",
+                    checked = autoFallbackEnabled,
+                    onCheckedChange = { viewModel.setAutoFallbackEnabled(it) }
+                )
             }
 
             item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
@@ -390,6 +402,31 @@ fun SettingsScreen(
 
             item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
 
+            // --- Секция: Сеть ---
+            item {
+                SectionHeader("Сеть")
+            }
+
+            item {
+                Button(
+                    onClick = onOpenDiagnostics,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Диагностика сети")
+                }
+            }
+
+            item {
+                Text(
+                    text = "Проверка доступности SMTP/IMAP к mail.ru / yandex / rambler — поможет понять, почему сообщения не отправляются (TSPU, белые списки, сбой провайдера).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                )
+            }
+
+            item { HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp)) }
+
             // --- Секция: О приложении ---
             item {
                 SectionHeader("О приложении")
@@ -497,6 +534,7 @@ private fun SectionHeader(title: String) {
 @Composable
 private fun AccountRow(
     account: EmailConfig,
+    health: SettingsViewModel.SmtpHealth,
     onDelete: () -> Unit
 ) {
     Card(
@@ -521,14 +559,27 @@ private fun AccountRow(
                     .weight(1f)
                     .padding(horizontal = 12.dp)
             ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    HealthDot(health)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = account.email,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+                val subtitle = when (health) {
+                    is SettingsViewModel.SmtpHealth.Healthy -> account.provider.name
+                    is SettingsViewModel.SmtpHealth.Sick -> {
+                        val sec = (health.quarantineRemainingMs / 1000).coerceAtLeast(1)
+                        "${account.provider.name}  ·  SMTP заблокирован, повтор через ${formatDuration(sec)}"
+                    }
+                }
                 Text(
-                    text = account.email,
-                    style = MaterialTheme.typography.bodyLarge
-                )
-                Text(
-                    text = account.provider.name,
+                    text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (health is SettingsViewModel.SmtpHealth.Sick)
+                        androidx.compose.ui.graphics.Color(0xFFC62828)
+                    else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
@@ -541,6 +592,23 @@ private fun AccountRow(
             }
         }
     }
+}
+
+@Composable
+private fun HealthDot(health: SettingsViewModel.SmtpHealth) {
+    val color = when (health) {
+        is SettingsViewModel.SmtpHealth.Healthy -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
+        is SettingsViewModel.SmtpHealth.Sick -> androidx.compose.ui.graphics.Color(0xFFC62828)
+    }
+    androidx.compose.foundation.Canvas(modifier = Modifier.size(8.dp)) {
+        drawCircle(color = color)
+    }
+}
+
+private fun formatDuration(seconds: Long): String = when {
+    seconds < 60 -> "${seconds}с"
+    seconds < 3600 -> "${seconds / 60}м"
+    else -> "${seconds / 3600}ч"
 }
 
 @Composable

@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import ru.cheburmail.app.account.SmtpHealthTracker
 import ru.cheburmail.app.messaging.DisappearingMessageManager
 import ru.cheburmail.app.repository.AccountRepository
 import ru.cheburmail.app.storage.AppSettings
@@ -29,8 +30,28 @@ import ru.cheburmail.app.transport.ScheduledCleanupWorker
 class SettingsViewModel(
     private val accountRepository: AccountRepository,
     private val appSettings: AppSettings,
-    private val appContext: android.content.Context
+    private val appContext: android.content.Context,
+    /**
+     * SmtpHealthTracker из общего SyncFactory — UI читает состояние per-account.
+     * null если не передан (тесты/legacy).
+     */
+    private val smtpHealthTracker: SmtpHealthTracker? = null
 ) : ViewModel() {
+
+    /** Снимок здоровья SMTP-аккаунта. Используется UI для визуализации. */
+    fun smtpHealthSnapshot(email: String): SmtpHealth {
+        val tracker = smtpHealthTracker ?: return SmtpHealth.Healthy
+        return if (tracker.isHealthy(email)) {
+            SmtpHealth.Healthy
+        } else {
+            SmtpHealth.Sick(tracker.quarantineRemainingMs(email))
+        }
+    }
+
+    sealed class SmtpHealth {
+        object Healthy : SmtpHealth()
+        data class Sick(val quarantineRemainingMs: Long) : SmtpHealth()
+    }
 
     /** Список сохранённых аккаунтов */
     val accounts: StateFlow<List<EmailConfig>> = accountRepository.getAll()
@@ -55,6 +76,14 @@ class SettingsViewModel(
     /** Интервал фоновой синхронизации (минуты) */
     val backgroundSyncIntervalMin: StateFlow<Long> = appSettings.backgroundSyncIntervalMin
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings.DEFAULT_BACKGROUND_SYNC_MIN)
+
+    /** Авто-fallback на другой аккаунт при SMTP-блокировке */
+    val autoFallbackEnabled: StateFlow<Boolean> = appSettings.autoFallbackEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    fun setAutoFallbackEnabled(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setAutoFallbackEnabled(enabled) }
+    }
 
     /** Запрет скриншотов */
     val screenshotsBlocked: StateFlow<Boolean> = appSettings.screenshotsBlocked

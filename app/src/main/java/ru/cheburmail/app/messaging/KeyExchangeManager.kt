@@ -5,6 +5,7 @@ import ru.cheburmail.app.crypto.FingerprintGenerator
 import ru.cheburmail.app.db.TrustStatus
 import ru.cheburmail.app.db.dao.ContactDao
 import ru.cheburmail.app.db.dao.ProcessedKeyExchangeDao
+import ru.cheburmail.app.db.entity.ContactAliasEntity
 import ru.cheburmail.app.db.entity.ContactEntity
 import ru.cheburmail.app.db.entity.ProcessedKeyExchangeEntity
 import ru.cheburmail.app.storage.SecureKeyStorage
@@ -23,13 +24,17 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Формат:
  * - Subject: CM/1/KEYEX/kex-<uuid>
- * - Body: JSON {"email":"...", "publicKey":"<base64>", "displayName":"..."}
+ * - Body: JSON {"email":"...","publicKey":"<base64>","displayName":"...","aliases":[...]}
  * - Content-Type: application/x-cheburmail-keyex
  *
+ * Поле `aliases` (с v0.4.0) — список других email-адресов той же identity
+ * (других моих аккаунтов: yandex/mail.ru/...). Получатель сохранит их в
+ * `contact_aliases`, чтобы матчить меня по любому из адресов.
+ *
  * Протокол:
- * 1. User A вводит email User B → отправляет свой публичный ключ
- * 2. User B получает → создаёт контакт (UNVERIFIED) → автоматически отправляет свой ключ назад
- * 3. User A получает ответ → создаёт контакт (UNVERIFIED) → чат готов
+ * 1. User A вводит email User B → отправляет свой публичный ключ + список своих aliases
+ * 2. User B получает → создаёт контакт (UNVERIFIED) + сохраняет aliases → отправляет свой ключ назад
+ * 3. User A получает ответ → создаёт контакт (UNVERIFIED) + сохраняет aliases → чат готов
  *
  * Безопасность и анти-бомбинг:
  * - VERIFIED контакты: смена ключа НЕ принимается автоматически (защита от MITM)
@@ -50,7 +55,14 @@ class KeyExchangeManager(
      * В проде подставляется [KeyexRateLimitStore.sharedPrefs], чтобы
      * флуд-защита пережила перезапуск service'а.
      */
-    private val rateLimitStore: KeyexRateLimitStore = KeyexRateLimitStore.inMemory()
+    private val rateLimitStore: KeyexRateLimitStore = KeyexRateLimitStore.inMemory(),
+    /**
+     * Поставщик email-алиасов текущей identity (всех моих аккаунтов кроме
+     * того, с которого отправляем). Возвращает пустой список — keyex
+     * отправится в формате v1 без поля aliases. В реальном коде
+     * подставляется лямбда поверх AccountRepository / MultiAccountManager.
+     */
+    private val aliasProvider: suspend (myEmail: String) -> List<String> = { emptyList() }
 ) {
 
     /** Кэш в памяти — используется если нет [processedDao] (в тестах/старых воркерах). */
@@ -59,8 +71,16 @@ class KeyExchangeManager(
     /**
      * Отправить свой публичный ключ на указанный email.
      * Повторные вызовы в пределах [SEND_RATE_LIMIT_MS] на один и тот же адрес игнорируются.
+     *
+     * @param explicitAliases если null — берём из aliasProvider; если задан явно
+     *   (например, в тестах), используется как есть. Полезно когда вызывающий
+     *   уже знает список аккаунтов и не хочет повторного DB-запроса.
      */
-    suspend fun sendKeyExchange(config: EmailConfig, targetEmail: String) {
+    suspend fun sendKeyExchange(
+        config: EmailConfig,
+        targetEmail: String,
+        explicitAliases: List<String>? = null
+    ) {
         val now = System.currentTimeMillis()
         val last = rateLimitStore.lastSent(targetEmail)
         if (last != null && now - last < SEND_RATE_LIMIT_MS) {
@@ -71,10 +91,18 @@ class KeyExchangeManager(
         val publicKey = keyStorage.getPublicKey()
             ?: throw IllegalStateException("Публичный ключ не найден")
 
+        val aliases = (explicitAliases ?: runCatching { aliasProvider(config.email) }.getOrDefault(emptyList()))
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !it.equals(config.email, ignoreCase = true) }
+            .distinctBy { it.lowercase() }
+
         val json = JSONObject().apply {
             put("email", config.email)
             put("publicKey", java.util.Base64.getEncoder().encodeToString(publicKey))
             put("displayName", config.email.substringBefore('@'))
+            if (aliases.isNotEmpty()) {
+                put("aliases", org.json.JSONArray(aliases))
+            }
         }
 
         val uuid = UUID.randomUUID().toString()
@@ -90,7 +118,7 @@ class KeyExchangeManager(
 
         smtpClient.send(config, emailMessage)
         rateLimitStore.markSent(targetEmail, now)
-        Log.i(TAG, "Key exchange отправлен -> $targetEmail")
+        Log.i(TAG, "Key exchange отправлен -> $targetEmail (aliases=${aliases.size})")
     }
 
     /**
@@ -144,51 +172,105 @@ class KeyExchangeManager(
                 return false
             }
 
+            // Опциональный список алиасов отправителя (его другие email-аккаунты).
+            // Sanitize: trim, не пустые, не равны senderEmail, уникальные, max 16.
+            val incomingAliases: List<String> = run {
+                val arr = json.optJSONArray("aliases") ?: return@run emptyList()
+                val out = mutableListOf<String>()
+                for (i in 0 until arr.length()) {
+                    val s = arr.optString(i, "").trim()
+                    if (s.isNotBlank() && !s.equals(senderEmail, ignoreCase = true)) {
+                        out += s
+                    }
+                }
+                out.distinctBy { it.lowercase() }.take(MAX_ALIASES_PER_KEYEX)
+            }
+
             val localKey = keyStorage.getPublicKey()
                 ?: throw IllegalStateException("Локальный ключ не найден")
 
             val fingerprint = FingerprintGenerator.generateHex(localKey, publicKey)
 
-            val existing = contactDao.getByEmail(senderEmail)
-            if (existing != null) {
-                if (existing.publicKey.contentEquals(publicKey)) {
-                    Log.d(TAG, "Контакт $senderEmail уже существует, ключ не изменился")
+            // Сначала пытаемся найти существующий контакт по pub_key — это
+            // основной идентификатор identity. senderEmail может быть alias,
+            // которого мы ещё не знаем.
+            val byPubKey = contactDao.getByPublicKey(publicKey)
+            val byEmail = contactDao.getByEmailOrAlias(senderEmail)
+
+            // Случай A: pub_key известен — это та же identity, что у нас есть.
+            // Регистрируем senderEmail и incomingAliases как alias'ы (если ещё нет).
+            if (byPubKey != null) {
+                val target = byPubKey
+                // Аномалия: byEmail указывает на ДРУГОЙ контакт. Это редкий случай —
+                // например, два разных pub_key обменивались с одного email раньше,
+                // потом один сменил pub_key. Сейчас pub_key совпадает с target,
+                // а email привязан к старому контакту. Не трогаем чужие алиасы;
+                // просто привяжем senderEmail к target если он свободен.
+                if (byEmail != null && byEmail.id != target.id) {
+                    Log.w(TAG, "keyex: pub_key совпал с contact ${target.id}, но email $senderEmail уже привязан к другому contact ${byEmail.id} — пропускаем регистрацию алиаса")
+                } else {
+                    registerAliasIfPossible(target.id, senderEmail, ContactAliasEntity.SOURCE_LEARNED)
+                }
+                for (alias in incomingAliases) {
+                    val existingAliasOwner = contactDao.getAliasByEmail(alias)
+                    if (existingAliasOwner != null && existingAliasOwner.contactId != target.id) {
+                        Log.w(TAG, "keyex: alias $alias уже принадлежит contact ${existingAliasOwner.contactId}, не трогаем")
+                        continue
+                    }
+                    val collidesPrimary = contactDao.getByEmail(alias)
+                    if (collidesPrimary != null && collidesPrimary.id != target.id) {
+                        Log.w(TAG, "keyex: alias $alias = primary email contact ${collidesPrimary.id}, не дублируем")
+                        continue
+                    }
+                    registerAliasIfPossible(target.id, alias, ContactAliasEntity.SOURCE_LEARNED)
+                }
+                Log.i(TAG, "Контакт ${target.email} (id=${target.id}) подтверждён по pub_key, алиасы синхронизированы (+${incomingAliases.size + 1})")
+                markProcessed(kexUuid)
+                return true
+            }
+
+            // Случай B: pub_key новый, но email уже известен под другим pub_key.
+            // Это либо смена ключа у контакта, либо MITM. Уважаем существующее
+            // поведение (UNVERIFIED — обновляем; VERIFIED — отклоняем).
+            if (byEmail != null) {
+                if (byEmail.publicKey.contentEquals(publicKey)) {
+                    // Не должно случиться (byPubKey был бы не null), но защищаемся.
+                    Log.d(TAG, "Контакт $senderEmail уже существует, ключ совпал")
                     markProcessed(kexUuid)
                     return false
                 }
 
-                if (existing.trustStatus == TrustStatus.VERIFIED) {
+                if (byEmail.trustStatus == TrustStatus.VERIFIED) {
                     Log.w(TAG, "ОТКЛОНЕНО: смена ключа VERIFIED контакта $senderEmail. Требуется ручное обновление.")
                     notificationHelper?.showKeyChangeWarning(senderEmail, wasVerified = true)
                     markProcessed(kexUuid)
                     return false
                 }
 
-                // Race guard: IMAP может вернуть устаревший keyex позже свежего.
-                // Если timestamp письма старее, чем updatedAt текущего контакта — игнорируем,
-                // иначе старый ключ перезатрёт актуальный и связь порвётся.
-                if (messageTimestamp != null && messageTimestamp < existing.updatedAt) {
-                    Log.w(TAG, "keyex stale: $senderEmail ts=$messageTimestamp < updatedAt=${existing.updatedAt} — игнорируем")
+                if (messageTimestamp != null && messageTimestamp < byEmail.updatedAt) {
+                    Log.w(TAG, "keyex stale: $senderEmail ts=$messageTimestamp < updatedAt=${byEmail.updatedAt} — игнорируем")
                     markProcessed(kexUuid)
                     return false
                 }
 
-                // UNVERIFIED + ключ изменился: обновляем молча, БЕЗ ответного keyex.
-                // Ответный keyex здесь — главный источник петли при мусорных keyex в IMAP партнёра.
-                val updated = existing.copy(
+                val updated = byEmail.copy(
                     publicKey = publicKey,
                     fingerprint = fingerprint,
                     trustStatus = TrustStatus.UNVERIFIED,
                     updatedAt = System.currentTimeMillis()
                 )
                 contactDao.update(updated)
-                Log.i(TAG, "Публичный ключ контакта $senderEmail обновлён (UNVERIFIED), ответный keyex не шлём")
+                Log.i(TAG, "Публичный ключ контакта $senderEmail обновлён (UNVERIFIED, key rotation)")
                 notificationHelper?.showKeyChangeWarning(senderEmail, wasVerified = false)
+                // Старые алиасы не валидны для нового pub_key — но и трогать их
+                // не будем, потому что getByPublicKey по новому ключу их и не
+                // найдёт. Алиасы остаются «висеть» на этом contact_id, что
+                // безопасно: матчинг идёт через contactDao.
                 markProcessed(kexUuid)
                 return true
             }
 
-            // Новый контакт
+            // Случай C: новый pub_key, новый email → создаём новый контакт.
             val now = System.currentTimeMillis()
             val contact = ContactEntity(
                 email = senderEmail,
@@ -200,8 +282,15 @@ class KeyExchangeManager(
                 updatedAt = now
             )
 
-            contactDao.insert(contact)
-            Log.i(TAG, "Контакт $senderEmail добавлен через key exchange (UNVERIFIED)")
+            val newId = contactDao.insert(contact)
+            // Primary email контакта зарегистрируем как PRIMARY-алиас тоже
+            // (для unified matcher через JOIN)
+            registerAliasIfPossible(newId, senderEmail, ContactAliasEntity.SOURCE_PRIMARY)
+            // Дополнительные алиасы из keyex — LEARNED
+            for (alias in incomingAliases) {
+                registerAliasIfPossible(newId, alias, ContactAliasEntity.SOURCE_LEARNED)
+            }
+            Log.i(TAG, "Контакт $senderEmail добавлен через key exchange (UNVERIFIED, +${incomingAliases.size} aliases)")
 
             // Отправляем свой ключ назад (с rate-limit внутри sendKeyExchange)
             if (config != null) {
@@ -239,6 +328,31 @@ class KeyExchangeManager(
         }
     }
 
+    /**
+     * Зарегистрировать email как alias контакта. Если такая же связка
+     * (contact_id, email) уже есть — IGNORE. Если email уже занят другим
+     * contact_id (UNIQUE-индекс на email) — лог, не падаем.
+     */
+    private suspend fun registerAliasIfPossible(
+        contactId: Long,
+        email: String,
+        source: String
+    ) {
+        try {
+            val alias = ContactAliasEntity(
+                contactId = contactId,
+                email = email,
+                source = source,
+                addedAt = System.currentTimeMillis()
+            )
+            contactDao.insertAlias(alias)
+        } catch (e: Exception) {
+            // SQLiteConstraintException на uniq index email — email привязан к
+            // другому контакту. Логируем, но не падаем.
+            Log.w(TAG, "registerAliasIfPossible: не удалось добавить $email -> contact $contactId: ${e.message}")
+        }
+    }
+
     private suspend fun isAlreadyProcessed(kexUuid: String): Boolean {
         val dao = processedDao
         if (dao != null) {
@@ -269,6 +383,8 @@ class KeyExchangeManager(
         private const val KEX_DEDUP_TTL_MS = 24 * 60 * 60 * 1000L // 24 часа
         /** Минимальный интервал между отправками keyex на один email. */
         private const val SEND_RATE_LIMIT_MS = 60 * 1000L // 1 минута
+        /** Лимит алиасов в одном keyex (защита от QR-мегапейлоадов). */
+        private const val MAX_ALIASES_PER_KEYEX = 16
         const val KEX_PREFIX = "kex-"
         const val KEYEX_CHAT_ID = "KEYEX"
         const val KEYEX_CONTENT_TYPE = "application/x-cheburmail-keyex"

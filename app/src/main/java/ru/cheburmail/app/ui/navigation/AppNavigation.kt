@@ -27,6 +27,7 @@ import ru.cheburmail.app.ui.contacts.ContactDetailScreen
 import ru.cheburmail.app.ui.contacts.ContactListScreen
 import ru.cheburmail.app.ui.contacts.ContactsViewModel
 import ru.cheburmail.app.ui.contacts.QrCodeScreen
+import ru.cheburmail.app.ui.diagnostics.DiagnosticsScreen
 import ru.cheburmail.app.ui.onboarding.OnboardingScreen
 import ru.cheburmail.app.ui.onboarding.OnboardingViewModel
 import ru.cheburmail.app.ui.settings.SettingsScreen
@@ -36,6 +37,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import ru.cheburmail.app.crypto.CryptoProvider
+import kotlinx.coroutines.flow.first
 import ru.cheburmail.app.crypto.MessageEncryptor
 import ru.cheburmail.app.crypto.NonceGenerator
 import ru.cheburmail.app.group.GroupManager
@@ -60,6 +62,7 @@ object Routes {
     const val ADD_CONTACT = "addContact"
     const val QR_CODE = "qrCode"
     const val SETTINGS = "settings"
+    const val DIAGNOSTICS = "diagnostics"
 
     fun chat(chatId: String) = "chat/$chatId"
     fun groupInfo(chatId: String) = "groupInfo/$chatId"
@@ -122,8 +125,12 @@ fun AppNavigation(
     val chatListViewModel = remember {
         ChatListViewModel(database.chatDao(), database.messageDao(), appContext)
     }
+    val syncFactory = remember { ru.cheburmail.app.sync.SyncFactory(appContext) }
     val settingsViewModel = remember {
-        SettingsViewModel(accountRepository, appSettings, appContext)
+        SettingsViewModel(
+            accountRepository, appSettings, appContext,
+            smtpHealthTracker = syncFactory.multiAccountManager().health()
+        )
     }
 
     // Deep link из уведомления — навигация в конкретный чат
@@ -167,7 +174,8 @@ fun AppNavigation(
                 },
                 onSettings = {
                     navController.navigate(Routes.SETTINGS)
-                }
+                },
+                sendEvents = syncFactory.multiAccountManager().events
             )
         }
 
@@ -336,14 +344,20 @@ fun AppNavigation(
 
         composable(Routes.QR_CODE) {
             var email by remember { mutableStateOf("") }
+            var aliases by remember { mutableStateOf(emptyList<String>()) }
             LaunchedEffect(Unit) {
-                val config = accountRepository.getActive()
-                email = config?.email ?: ""
+                val active = accountRepository.getActive()
+                email = active?.email ?: ""
+                // Все остальные аккаунты юзера = алиасы той же identity
+                aliases = accountRepository.getAll().first()
+                    .map { it.email }
+                    .filter { !it.equals(email, ignoreCase = true) }
             }
             if (email.isNotEmpty()) {
                 QrCodeScreen(
                     keyStorage = keyStorage,
                     email = email,
+                    aliases = aliases,
                     onBack = { navController.popBackStack() }
                 )
             }
@@ -355,8 +369,15 @@ fun AppNavigation(
                 onAddAccount = {
                     navController.navigate(Routes.ONBOARDING)
                 },
+                onOpenDiagnostics = {
+                    navController.navigate(Routes.DIAGNOSTICS)
+                },
                 onBack = { navController.popBackStack() }
             )
+        }
+
+        composable(Routes.DIAGNOSTICS) {
+            DiagnosticsScreen(onBack = { navController.popBackStack() })
         }
     }
 }

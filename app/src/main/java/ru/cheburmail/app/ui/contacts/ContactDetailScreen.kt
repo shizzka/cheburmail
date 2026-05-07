@@ -58,6 +58,7 @@ fun ContactDetailScreen(
     onBack: () -> Unit
 ) {
     val contact by viewModel.selectedContact.collectAsState()
+    val aliases by viewModel.selectedContactAliases.collectAsState()
     val safetyNumber by viewModel.safetyNumber.collectAsState()
     val keyRefreshState by viewModel.keyRefreshState.collectAsState()
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -118,6 +119,32 @@ fun ContactDetailScreen(
 
             // Email
             InfoCard(label = "Email", value = currentContact.email)
+
+            // Алиасы (другие email той же identity)
+            if (aliases.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Также пишет с",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        for (alias in aliases) {
+                            Text(
+                                text = alias,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 
