@@ -32,6 +32,16 @@ object WhatsNew {
 
     val ENTRIES: List<WhatsNewEntry> = listOf(
         WhatsNewEntry(
+            versionCode = 18,
+            versionName = "0.4.3",
+            title = "Полировка onboarding и обновлений",
+            changes = listOf(
+                "«Добавить аккаунт» в Настройках корректно открывает onboarding — раньше после первого аккаунта переходил сразу в чаты",
+                "Баннер «Доступно обновление» исчезает на актуальной версии (раньше мог зависнуть)",
+                "Бот @my_fabrica_bot: чёткое разделение Stable/Debug с пояснениями"
+            )
+        ),
+        WhatsNewEntry(
             versionCode = 17,
             versionName = "0.4.2",
             title = "What's new + полировка",

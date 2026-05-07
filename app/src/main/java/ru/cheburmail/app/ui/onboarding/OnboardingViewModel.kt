@@ -65,6 +65,21 @@ class OnboardingViewModel(
     private val _isComplete = MutableStateFlow(false)
     val isComplete: StateFlow<Boolean> = _isComplete.asStateFlow()
 
+    /**
+     * Сброс состояния — для переиспользования VM при добавлении второго/N-го
+     * аккаунта из Настроек. Без этого VM остаётся isComplete=true после
+     * первого добавления, и повторный заход на onboarding-экран сразу
+     * редиректит на CHAT_LIST.
+     */
+    fun reset() {
+        _currentStep.value = OnboardingStep.PROVIDER_SELECT
+        _selectedProvider.value = null
+        _email.value = ""
+        _password.value = ""
+        _connectionTestState.value = ConnectionTestState.Idle
+        _isComplete.value = false
+    }
+
     fun selectProvider(provider: EmailProvider) {
         _selectedProvider.value = provider
         _currentStep.value = OnboardingStep.APP_PASSWORD_GUIDE

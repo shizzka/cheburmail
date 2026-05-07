@@ -1,8 +1,10 @@
 package ru.cheburmail.app.ui.onboarding
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 
 /**
  * Корневой экран онбординга.
@@ -13,6 +15,12 @@ fun OnboardingScreen(
     viewModel: OnboardingViewModel,
     onComplete: () -> Unit
 ) {
+    // При входе в экран сбрасываем VM — нужно для повторного захода
+    // (добавление 2-го/3-го аккаунта из Настроек). Без reset() второй вход
+    // выдаст isComplete=true и сразу onComplete() → юзер не успевает выбрать
+    // провайдера.
+    remember { viewModel.reset(); Unit }
+
     val currentStep by viewModel.currentStep.collectAsState()
     val isComplete by viewModel.isComplete.collectAsState()
 

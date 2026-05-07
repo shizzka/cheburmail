@@ -123,12 +123,11 @@ fun ChatListScreen(
     val context = LocalContext.current
     var updateInfo by remember { mutableStateOf(UpdateChecker.getCached(context)) }
 
-    // Проверяем при первом открытии (если кэш пустой или старый)
+    // Проверяем при первом открытии (если кэш пустой или старый).
+    // Важно: присваиваем result безусловно (включая null) — иначе stale-cache
+    // (например, после upgrade на актуальную версию) оставлял бы banner висеть.
     LaunchedEffect(Unit) {
-        val result = UpdateChecker.check(context)
-        if (result != null) {
-            updateInfo = result
-        }
+        updateInfo = UpdateChecker.check(context)
     }
 
     // What's new — после обновления показываем список изменений.
