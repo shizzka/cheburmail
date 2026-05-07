@@ -165,7 +165,11 @@ dependencies {
     testImplementation(libs.coroutines.test)
     // libsodium for JVM unit tests (native binary bundled in jar).
     // 5.1.1 built for Java 8+, later versions require Java 21.
-    testImplementation("com.goterl:lazysodium-java:5.1.1")
+    // lazysodium-java 5.1.1 был скомпилен под Java 21 (class file 65) — несовместим
+    // с Java 17 runtime тестов (UnsupportedClassVersionError). 5.1.0 — последняя
+    // версия под Java 17. Если когда-то полностью переедем на JDK 21, можно
+    // обновить.
+    testImplementation("com.goterl:lazysodium-java:5.1.0")
     testImplementation("net.java.dev.jna:jna:5.18.1")
     // org.json is bundled-but-stubbed in android.jar; need real impl for JVM unit tests
     testImplementation("org.json:json:20231013")
