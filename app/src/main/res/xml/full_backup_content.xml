@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Backup-policy для Android < 12 (на 12+ применяется data_extraction_rules.xml).
+  allowBackup=false покрывает Auto Backup, но lint требует явный fullBackupContent.
+  Запрещаем всё на всякий случай: БД зашифрована (SQLCipher), но крипто-ключи
+  хранятся через Android Keystore и при backup не сохраняются — копия БД без
+  ключей бесполезна, но и в backup её слать незачем.
+-->
+<full-backup-content>
+    <exclude domain="root" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="external" path="." />
+</full-backup-content>

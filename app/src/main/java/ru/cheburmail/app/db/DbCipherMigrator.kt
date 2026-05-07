@@ -45,7 +45,26 @@ object DbCipherMigrator {
      * Идемпотентно мигрирует cheburmail.db из plaintext в SQLCipher-encrypted.
      * Должна вызываться ДО открытия БД через Room.
      */
+    /**
+     * Удалить любой оставшийся plaintext-backup от прошлой миграции. Безопасно
+     * вызывать многократно. Защита от сценария: миграция отметила флаг, потом
+     * приложение крашнулось до удаления backup → plaintext-копия БД остаётся
+     * на диске. На каждом старте подчищаем.
+     */
+    fun cleanupPlaintextBackup(context: Context) {
+        val parent = context.getDatabasePath(DB_NAME).parentFile ?: return
+        val backup = File(parent, "$DB_NAME.plaintext.bak")
+        if (backup.exists()) {
+            val ok = backup.delete()
+            Log.i(TAG, "cleanupPlaintextBackup: deleted=${ok} (size was ${backup.length()})")
+        }
+    }
+
     fun migrateIfNeeded(context: Context, passphrase: String) {
+        // Зачистка осиротевшего backup ДО любых других проверок — даже если
+        // миграция уже сделана давно, plaintext-копия не должна жить вечно.
+        cleanupPlaintextBackup(context)
+
         if (isMigrated(context)) return
 
         val plaintextFile = context.getDatabasePath(DB_NAME)

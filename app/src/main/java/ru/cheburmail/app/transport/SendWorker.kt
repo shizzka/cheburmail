@@ -67,6 +67,10 @@ class SendWorker(
         // Mark as SENDING
         sendQueueDao.updateStatus(entry.id, QueueStatus.SENDING)
 
+        // sendConfig объявлен ВНЕ try чтобы catch-блок видел реально
+        // использованный аккаунт (а не emailConfig) — это критично для health-tracking
+        // когда multi-account выбрал не базовый аккаунт.
+        var sendConfig: EmailConfig = emailConfig
         try {
             // Get the message
             val message = messageDao.getByIdOnce(msgId)
@@ -85,7 +89,7 @@ class SendWorker(
             }
 
             // Выбираем аккаунт: мульти-аккаунт (с учётом health) или одиночный
-            val sendConfig = multiAccountManager?.getNextSendAccount() ?: emailConfig
+            sendConfig = multiAccountManager?.getNextSendAccount() ?: emailConfig
 
             // Load payload: from file (large media) or from DB BLOB (text / small media)
             val payload = if (entry.payloadFilePath != null) {
@@ -175,10 +179,11 @@ class SendWorker(
             sendQueueDao.updateStatus(entry.id, QueueStatus.FAILED)
 
         } catch (e: TransportException.SmtpException) {
-            // Health-aware fallback: маркируем sendConfig как sick, пробуем
-            // другой аккаунт ПРЯМО СЕЙЧАС (без retry-delay). Если успех —
-            // мы уже отправили в catch-блоке. Если нет — обычный handleRetry.
-            val sentByFallback = tryImmediateFallback(entry, e)
+            // Health-aware fallback: маркируем фактически использованный
+            // sendConfig (не emailConfig!) как sick, пробуем другой аккаунт
+            // ПРЯМО СЕЙЧАС (без retry-delay). Если успех — мы уже отправили
+            // в catch-блоке. Если нет — обычный handleRetry.
+            val sentByFallback = tryImmediateFallback(entry, sendConfig, e)
             if (!sentByFallback) {
                 handleRetry(entry, e)
             }
@@ -197,12 +202,14 @@ class SendWorker(
      */
     private suspend fun tryImmediateFallback(
         entry: SendQueueEntity,
+        failedConfig: EmailConfig,
         originalError: TransportException.SmtpException
     ): Boolean {
         val mam = multiAccountManager ?: return false
-        // Отметим текущий emailConfig как sick для будущих писем тоже
-        mam.health().recordFail(emailConfig.email)
-        Log.w(TAG, "SMTP fail для ${emailConfig.email}: ${originalError.message} — пробуем fallback")
+        // Отметим РЕАЛЬНО упавший аккаунт как sick (failedConfig != emailConfig
+        // если round-robin выбрал не базовый)
+        mam.health().recordFail(failedConfig.email)
+        Log.w(TAG, "SMTP fail для ${failedConfig.email}: ${originalError.message} — пробуем fallback")
 
         // Глобальный rubber-cheque: если auto-fallback отключён — не пробуем
         if (!autoFallbackEnabled) {
@@ -210,11 +217,11 @@ class SendWorker(
             return false
         }
 
-        val fallback = mam.getNextSendAccount(exclude = setOf(emailConfig.email))
+        val fallback = mam.getNextSendAccount(exclude = setOf(failedConfig.email))
             ?: run {
                 Log.w(TAG, "Fallback недоступен — нет других здоровых аккаунтов")
                 mam.emit(ru.cheburmail.app.account.MultiAccountManager.SendEvent.AllAccountsFailed(
-                    originalAccount = emailConfig.email,
+                    originalAccount = failedConfig.email,
                     reason = originalError.message ?: "SMTP fail"
                 ))
                 return false
@@ -275,7 +282,7 @@ class SendWorker(
             messageDao.updateStatus(entry.messageId, ru.cheburmail.app.db.MessageStatus.SENT)
             Log.i(TAG, "Сообщение ${entry.messageId} отправлено через fallback ${fallback.email}")
             mam.emit(ru.cheburmail.app.account.MultiAccountManager.SendEvent.FallbackUsed(
-                originalAccount = emailConfig.email,
+                originalAccount = failedConfig.email,
                 fallbackAccount = fallback.email,
                 reason = originalError.message ?: "SMTP fail"
             ))

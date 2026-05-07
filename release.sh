@@ -40,15 +40,29 @@ echo "→ Gradle $GRADLE_TASK..."
 
 cp "$APK_SRC" "/tmp/$APK_NAME"
 
+# Tags считаем immutable — один tag = один артефакт. Для повторной публикации
+# бампни versionCode/versionName в app/build.gradle.kts. Опция FORCE=1 перебивает
+# (пользоваться только для debug-сборок при сломанном CI).
 if gh release view "$TAG" >/dev/null 2>&1; then
-    echo "→ Релиз $TAG уже есть, удаляю и пересоздаю..."
-    gh release delete "$TAG" --yes --cleanup-tag
+    if [[ "${FORCE:-0}" == "1" ]]; then
+        echo "→ FORCE=1: релиз $TAG уже есть, удаляю и пересоздаю..."
+        gh release delete "$TAG" --yes --cleanup-tag
+    else
+        echo "ERROR: релиз $TAG уже опубликован. Бампни versionCode в app/build.gradle.kts" >&2
+        echo "  или запусти с FORCE=1 (только для debug)." >&2
+        exit 1
+    fi
 fi
+
+# SHA-256 для аудита: один tag = один артефакт с известным хешем
+APK_SHA256=$(sha256sum "/tmp/$APK_NAME" | awk '{print $1}')
+RELEASE_NOTES="Автосборка $(date -Iseconds)
+SHA-256: \`$APK_SHA256\`"
 
 echo "→ gh release create $TAG..."
 gh release create "$TAG" \
     --title "$TITLE" \
-    --notes "Автосборка $(date -Iseconds)" \
+    --notes "$RELEASE_NOTES" \
     $PRERELEASE_FLAG \
     "/tmp/$APK_NAME"
 
@@ -59,7 +73,7 @@ if [[ -z "$TOKEN" ]]; then
 fi
 CAPTION="🔧 CheburMail ${VERSION_NAME} ${MODE}"
 for CID in 133154291 111000637; do
-    curl -s -x http://127.0.0.1:7897 -F chat_id=$CID \
+    curl -s -x http://127.0.0.1:10809 -F chat_id=$CID \
         -F document=@"/tmp/$APK_NAME" \
         -F "caption=$CAPTION" \
         "https://api.telegram.org/bot$TOKEN/sendDocument" >/dev/null

@@ -108,7 +108,10 @@ class AppSettings private constructor(private val context: Context) {
     // ── Запрет скриншотов ──────────────────────────────────────────────────
 
     val screenshotsBlocked: Flow<Boolean> = ds.data.map {
-        it[Keys.SCREENSHOTS_BLOCKED] ?: false
+        // Default ON — для приватного мессенджера secure-by-default лучше opt-in.
+        // README обещает защиту от скриншотов; раньше она была off-by-default,
+        // что не соответствовало документации.
+        it[Keys.SCREENSHOTS_BLOCKED] ?: true
     }
 
     suspend fun setScreenshotsBlocked(blocked: Boolean) {

@@ -13,7 +13,6 @@ local.properties
 *.ap_
 *.dex
 /app/build
-/app/schemas
 *.hprof
 
 # Keystore (secrets)
