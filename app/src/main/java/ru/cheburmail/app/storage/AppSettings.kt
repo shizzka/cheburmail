@@ -32,6 +32,7 @@ class AppSettings private constructor(private val context: Context) {
         val SCREENSHOTS_BLOCKED = booleanPreferencesKey("screenshots_blocked")
         val IMAP_AUTO_CLEANUP = booleanPreferencesKey("imap_auto_cleanup")
         val AUTO_FALLBACK_ENABLED = booleanPreferencesKey("auto_fallback_enabled")
+        val LAST_SEEN_WHATSNEW_VERSION = androidx.datastore.preferences.core.intPreferencesKey("last_seen_whatsnew_version")
     }
 
     // ── Значения по умолчанию ─────────────────────────────────────────────
@@ -136,5 +137,17 @@ class AppSettings private constructor(private val context: Context) {
 
     suspend fun setAutoFallbackEnabled(enabled: Boolean) {
         ds.edit { it[Keys.AUTO_FALLBACK_ENABLED] = enabled }
+    }
+
+    // ── What's new ─────────────────────────────────────────────────────────
+    // Хранит versionCode последнего показа диалога «Что нового». -1 если
+    // никогда не показывался (свежая установка → ставим current и не показываем).
+
+    val lastSeenWhatsNewVersion: Flow<Int> = ds.data.map {
+        it[Keys.LAST_SEEN_WHATSNEW_VERSION] ?: -1
+    }
+
+    suspend fun setLastSeenWhatsNewVersion(versionCode: Int) {
+        ds.edit { it[Keys.LAST_SEEN_WHATSNEW_VERSION] = versionCode }
     }
 }

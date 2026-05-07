@@ -63,6 +63,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import ru.cheburmail.app.db.ChatType
@@ -128,6 +129,47 @@ fun ChatListScreen(
         if (result != null) {
             updateInfo = result
         }
+    }
+
+    // What's new — после обновления показываем список изменений между
+    // последней увиденной версией и текущей. На свежей установке (last=-1)
+    // ставим current и не показываем — для нового юзера всё новое.
+    var whatsNewEntries by remember {
+        mutableStateOf<List<ru.cheburmail.app.ui.whatsnew.WhatsNewEntry>>(emptyList())
+    }
+    LaunchedEffect(Unit) {
+        val settings = ru.cheburmail.app.storage.AppSettings.getInstance(context)
+        val lastSeen = settings.lastSeenWhatsNewVersion.first()
+        val currentVersionCode = try {
+            val pkg = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                pkg.longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION") pkg.versionCode
+            }
+        } catch (_: Exception) { 0 }
+
+        if (lastSeen == -1) {
+            // Свежая установка — фиксируем current, не показываем
+            settings.setLastSeenWhatsNewVersion(currentVersionCode)
+        } else if (currentVersionCode > lastSeen) {
+            whatsNewEntries = ru.cheburmail.app.ui.whatsnew.WhatsNew.entriesAfter(lastSeen)
+        }
+    }
+    if (whatsNewEntries.isNotEmpty()) {
+        ru.cheburmail.app.ui.whatsnew.WhatsNewDialog(
+            entries = whatsNewEntries,
+            onDismiss = {
+                val list = whatsNewEntries
+                whatsNewEntries = emptyList()
+                // Запоминаем максимальный показанный versionCode
+                val maxShown = list.maxOf { it.versionCode }
+                kotlinx.coroutines.GlobalScope.launch {
+                    ru.cheburmail.app.storage.AppSettings.getInstance(context)
+                        .setLastSeenWhatsNewVersion(maxShown)
+                }
+            }
+        )
     }
 
     // Диалог подтверждения удаления
