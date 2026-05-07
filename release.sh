@@ -56,7 +56,22 @@ fi
 
 # SHA-256 для аудита: один tag = один артефакт с известным хешем
 APK_SHA256=$(sha256sum "/tmp/$APK_NAME" | awk '{print $1}')
-RELEASE_NOTES="Автосборка $(date -Iseconds)
+
+# Извлекаем changelog для текущей версии из CHANGELOG.md
+# Формат: «## <versionName> — <заголовок>\n<булеты до следующей ##>»
+CHANGELOG_BODY=$(awk -v v="## ${VERSION_NAME} " '
+    $0 ~ "^"v {found=1; print; next}
+    /^## / {if (found) exit}
+    found {print}
+' CHANGELOG.md)
+if [[ -z "$CHANGELOG_BODY" ]]; then
+    CHANGELOG_BODY="(нет записи в CHANGELOG.md для $VERSION_NAME)"
+fi
+
+RELEASE_NOTES="$CHANGELOG_BODY
+
+---
+Автосборка: $(date -Iseconds)
 SHA-256: \`$APK_SHA256\`"
 
 echo "→ gh release create $TAG..."
@@ -71,11 +86,20 @@ if [[ -z "$TOKEN" ]]; then
     echo "ERROR: TELEGRAM_BOT_TOKEN не задан в окружении" >&2
     exit 1
 fi
-CAPTION="🔧 CheburMail ${VERSION_NAME} ${MODE}"
+# TG caption: версия + changelog (Telegram limit 1024 символа на caption,
+# обрезаем если слишком длинный)
+TG_CAPTION="🔧 CheburMail ${VERSION_NAME} ${MODE}
+
+${CHANGELOG_BODY}"
+# Telegram caption max = 1024 chars. Обрезаем с многоточием.
+if [[ ${#TG_CAPTION} -gt 1020 ]]; then
+    TG_CAPTION="${TG_CAPTION:0:1020}…"
+fi
+
 for CID in 133154291 111000637; do
     curl -s -x http://127.0.0.1:10809 -F chat_id=$CID \
         -F document=@"/tmp/$APK_NAME" \
-        -F "caption=$CAPTION" \
+        -F "caption=$TG_CAPTION" \
         "https://api.telegram.org/bot$TOKEN/sendDocument" >/dev/null
     echo "→ отправлено в Telegram: $CID"
 done

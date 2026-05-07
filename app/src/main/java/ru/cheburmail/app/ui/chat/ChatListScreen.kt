@@ -131,9 +131,13 @@ fun ChatListScreen(
         }
     }
 
-    // What's new — после обновления показываем список изменений между
-    // последней увиденной версией и текущей. На свежей установке (last=-1)
-    // ставим current и не показываем — для нового юзера всё новое.
+    // What's new — после обновления показываем список изменений.
+    // Логика lastSeen=-1 (default, ключа никогда не было):
+    //   • есть аккаунты в БД → это upgrade с pre-whatsnew версии,
+    //     показываем ВСЕ записи WhatsNew.ENTRIES (юзер ничего из них не видел)
+    //   • нет аккаунтов → реальная свежая установка, фиксируем current,
+    //     не показываем (для нового юзера всё новое)
+    // lastSeen >= 0 → стандартный upgrade, показываем entriesAfter(lastSeen)
     var whatsNewEntries by remember {
         mutableStateOf<List<ru.cheburmail.app.ui.whatsnew.WhatsNewEntry>>(emptyList())
     }
@@ -149,11 +153,22 @@ fun ChatListScreen(
             }
         } catch (_: Exception) { 0 }
 
-        if (lastSeen == -1) {
-            // Свежая установка — фиксируем current, не показываем
-            settings.setLastSeenWhatsNewVersion(currentVersionCode)
-        } else if (currentVersionCode > lastSeen) {
-            whatsNewEntries = ru.cheburmail.app.ui.whatsnew.WhatsNew.entriesAfter(lastSeen)
+        when {
+            lastSeen == -1 -> {
+                // Различаем upgrade с pre-whatsnew vs fresh install по
+                // наличию аккаунтов: если у юзера уже есть настроенный аккаунт
+                // — это upgrade, показываем все записи; иначе fresh install.
+                val accountRepo = ru.cheburmail.app.repository.AccountRepository.create(context)
+                val hasExistingAccount = accountRepo.hasAccounts()
+                if (hasExistingAccount) {
+                    whatsNewEntries = ru.cheburmail.app.ui.whatsnew.WhatsNew.ENTRIES
+                } else {
+                    settings.setLastSeenWhatsNewVersion(currentVersionCode)
+                }
+            }
+            currentVersionCode > lastSeen -> {
+                whatsNewEntries = ru.cheburmail.app.ui.whatsnew.WhatsNew.entriesAfter(lastSeen)
+            }
         }
     }
     if (whatsNewEntries.isNotEmpty()) {
