@@ -44,8 +44,11 @@ data class EncryptedEnvelope(
          * Deserialize from bytes: first 24 bytes = nonce, rest = ciphertext.
          */
         fun fromBytes(data: ByteArray): EncryptedEnvelope {
-            require(data.size > CryptoConstants.NONCE_BYTES + CryptoConstants.MAC_BYTES) {
-                "Data too short: need at least ${CryptoConstants.NONCE_BYTES + CryptoConstants.MAC_BYTES + 1} bytes, got ${data.size}"
+            // crypto_box(empty_plaintext) даёт ciphertext длины ровно MAC_BYTES,
+            // поэтому wire payload = nonce + MAC валиден. Раньше require был
+            // строгим > и отвергал такие сообщения.
+            require(data.size >= CryptoConstants.NONCE_BYTES + CryptoConstants.MAC_BYTES) {
+                "Data too short: need at least ${CryptoConstants.NONCE_BYTES + CryptoConstants.MAC_BYTES} bytes, got ${data.size}"
             }
             val nonce = data.copyOfRange(0, CryptoConstants.NONCE_BYTES)
             val ciphertext = data.copyOfRange(CryptoConstants.NONCE_BYTES, data.size)
