@@ -212,14 +212,34 @@ class ReceiveWorker(
 
                 val textStr = String(plaintext, Charsets.UTF_8)
 
-                // Handle DELETE control messages
+                // Handle DELETE control messages.
+                // Авторизация: только автор сообщения может удалить своё, и
+                // только в рамках того же чата. Иначе любой контакт со знанием
+                // msgUuid мог бы стирать чужие сообщения у получателя.
                 if (textStr.startsWith("DELETE:")) {
                     val targetMsgId = textStr.removePrefix("DELETE:")
+                    val targetMessage = messageDao.getByIdOnce(targetMsgId)
+                    if (targetMessage == null) {
+                        Log.w(TAG, "DELETE: target $targetMsgId не найден, игнорируем (от ${msg.fromEmail})")
+                        continue
+                    }
+                    if (targetMessage.chatId != correctChatId) {
+                        Log.w(TAG, "DELETE: target $targetMsgId принадлежит чату ${targetMessage.chatId}, но команда из $correctChatId — отклонено (от ${msg.fromEmail})")
+                        continue
+                    }
+                    if (targetMessage.isOutgoing) {
+                        Log.w(TAG, "DELETE: $targetMsgId — наше исходящее, ${msg.fromEmail} не может его удалить — отклонено")
+                        continue
+                    }
+                    if (targetMessage.senderContactId != contact.id) {
+                        Log.w(TAG, "DELETE: $targetMsgId автор=contact_id ${targetMessage.senderContactId}, запрос от contact_id ${contact.id} (${msg.fromEmail}) — отклонено")
+                        continue
+                    }
+                    // Авторизовано — удаляем
                     messageDao.deleteById(targetMsgId)
                     messageDao.insertDeleted(
                         ru.cheburmail.app.db.entity.DeletedMessageEntity(targetMsgId)
                     )
-                    // Удаляем оригинальное сообщение из IMAP у получателя
                     if (emailConfig != null) {
                         try {
                             ImapClient().deleteFromImap(emailConfig, targetMsgId)
@@ -228,7 +248,7 @@ class ReceiveWorker(
                             Log.w(TAG, "Failed to delete from IMAP: ${e.message}")
                         }
                     }
-                    Log.i(TAG, "Deleted message $targetMsgId by remote request from ${msg.fromEmail}")
+                    Log.i(TAG, "Deleted message $targetMsgId by author ${msg.fromEmail}")
                     continue
                 }
 

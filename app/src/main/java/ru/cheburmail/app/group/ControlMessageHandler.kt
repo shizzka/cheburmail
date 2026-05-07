@@ -158,8 +158,15 @@ class ControlMessageHandler(
 
     /**
      * MEMBER_REMOVED: удалить участника из группы.
-     * Только от admin'а. Случай "кикнули меня" обрабатываем до проверки
-     * admin'а, чтобы кикнутый узнал даже если чат у него сломан.
+     * Только от admin'а — включая случай "кикнули меня". Раньше self-removal
+     * выполнялся ДО проверки admin'а (любой контакт мог отправить целевой email
+     * жертвы и заставить её удалить локальный чат). Теперь сначала загружаем
+     * чат, проверяем admin, и только потом применяем self-removal или
+     * member-removal.
+     *
+     * Legacy fallback: для старых групп без `chat.createdBy` (admin metadata
+     * не было известно) self-remove применяется без admin-проверки — иначе
+     * жертва не сможет покинуть сломанный чат.
      */
     private suspend fun handleMemberRemoved(msg: ControlMessage, fromEmail: String? = null) {
         val target = msg.targetEmail
@@ -168,23 +175,37 @@ class ControlMessageHandler(
             return
         }
 
-        // Если кикнули меня — удалить чат локально, чтобы не слать в пустоту.
-        // FK CASCADE уберёт chat_members и messages.
-        // Делаем до admin-проверки: даже если admin поменялся, кикнутый
-        // должен узнать о выходе.
-        if (selfEmail.isNotEmpty() && target.equals(selfEmail, ignoreCase = true)) {
-            chatDao.deleteById(msg.chatId)
-            Log.i(TAG, "MEMBER_REMOVED: меня ($selfEmail) удалили из ${msg.chatId} → чат удалён локально")
-            return
-        }
-
         val chat = chatDao.getById(msg.chatId)
         if (chat == null) {
             Log.w(TAG, "Чат ${msg.chatId} не найден для MEMBER_REMOVED")
             return
         }
+
+        val isSelfTarget = selfEmail.isNotEmpty() && target.equals(selfEmail, ignoreCase = true)
+        val adminKnown = !chat.createdBy.isNullOrBlank()
+
+        // Legacy: для групп без admin metadata разрешаем только self-remove
+        // как fallback (иначе юзер не сможет покинуть сломанный чат).
+        if (!adminKnown) {
+            if (isSelfTarget) {
+                chatDao.deleteById(msg.chatId)
+                Log.i(TAG, "MEMBER_REMOVED legacy (без admin): self-remove из ${msg.chatId} → чат удалён локально")
+            } else {
+                Log.w(TAG, "MEMBER_REMOVED legacy (без admin) для другого участника $target — игнорируем (нет authoritative источника)")
+            }
+            return
+        }
+
+        // Группа с admin metadata — строго проверяем admin
         if (!isFromAdmin(chat, fromEmail)) {
-            Log.w(TAG, "MEMBER_REMOVED от $fromEmail, но admin=${chat.createdBy}. Игнорируем.")
+            Log.w(TAG, "MEMBER_REMOVED от $fromEmail, но admin=${chat.createdBy}. Игнорируем (target=$target).")
+            return
+        }
+
+        // Авторизованный admin — выполняем
+        if (isSelfTarget) {
+            chatDao.deleteById(msg.chatId)
+            Log.i(TAG, "MEMBER_REMOVED admin'ом: меня ($selfEmail) удалили из ${msg.chatId} → чат удалён локально")
             return
         }
 
@@ -193,9 +214,8 @@ class ControlMessageHandler(
             Log.w(TAG, "Контакт $target не найден для удаления из группы")
             return
         }
-
         chatDao.deleteMember(msg.chatId, contact.id)
-        Log.i(TAG, "MEMBER_REMOVED: $target удалён из ${msg.chatId}")
+        Log.i(TAG, "MEMBER_REMOVED: $target удалён из ${msg.chatId} admin'ом $fromEmail")
     }
 
     /**
