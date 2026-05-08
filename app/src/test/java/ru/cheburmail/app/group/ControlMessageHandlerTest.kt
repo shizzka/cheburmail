@@ -239,6 +239,75 @@ class ControlMessageHandlerTest {
         assertNull(pendingDao.get(chatId, bob))
     }
 
+    // ── alias-admin canonicalization для APPROVED/REJECTED/INVITE ─────────
+
+    /** Ставит admin'у (chat.createdBy=me) alias-аккаунт через contact_aliases. */
+    private suspend fun setupAdminAlias(adminPrimary: String = me, adminAlias: String): Long {
+        // Если у админа ещё нет contact-записи, создаём
+        val existing = contactDao.getByEmail(adminPrimary)
+        val adminId = existing?.id ?: contactDao.insert(verified(0L, adminPrimary, "Admin-self"))
+        contactDao.insertAlias(
+            ru.cheburmail.app.db.entity.ContactAliasEntity(
+                contactId = adminId, email = adminAlias,
+                source = ru.cheburmail.app.db.entity.ContactAliasEntity.SOURCE_LEARNED,
+                addedAt = now
+            )
+        )
+        return adminId
+    }
+
+    @Test
+    fun memberAddApproved_fromAliasOfAdmin_clearsPending() = runBlocking {
+        // admin (me) ответил approve с alias-аккаунта (me-alt@y.ru) после fallback.
+        // Должно быть распознано как admin и pending снят.
+        setupAdminAlias(adminAlias = "me-alt@y.ru")
+        pendingDao.upsert(
+            PendingAddRequestEntity(chatId, bob, me, ByteArray(32), "Bob", now)
+        )
+        val msg = ControlMessage(
+            type = ControlMessageType.MEMBER_ADD_APPROVED,
+            chatId = chatId, groupName = "Group", members = emptyList(),
+            targetEmail = bob, requesterEmail = me
+        ).toJson()
+        handler.handle(msg, fromEmail = "me-alt@y.ru")
+        assertNull("Alias admin'а должен быть распознан, pending снят",
+            pendingDao.get(chatId, bob))
+    }
+
+    @Test
+    fun memberAddRejected_fromAliasOfAdmin_clearsPending() = runBlocking {
+        setupAdminAlias(adminAlias = "me-alt2@y.ru")
+        pendingDao.upsert(
+            PendingAddRequestEntity(chatId, bob, me, ByteArray(32), "Bob", now)
+        )
+        val msg = ControlMessage(
+            type = ControlMessageType.MEMBER_ADD_REJECTED,
+            chatId = chatId, groupName = "Group", members = emptyList(),
+            targetEmail = bob, requesterEmail = me
+        ).toJson()
+        handler.handle(msg, fromEmail = "me-alt2@y.ru")
+        assertNull("Alias admin'а должен быть распознан в REJECTED, pending снят",
+            pendingDao.get(chatId, bob))
+    }
+
+    @Test
+    fun groupInvite_reInviteFromAliasOfAdmin_accepted() = runBlocking {
+        // Существующий чат с createdBy=me; приходит повторный GROUP_INVITE
+        // от alias-аккаунта админа (me-alt3@y.ru) → должен пройти как admin
+        // (обновит title), а не быть отвергнут как hijack.
+        setupAdminAlias(adminAlias = "me-alt3@y.ru")
+        // setup() уже создал чат с createdBy=me и title="Group"
+        val updatedTitle = "Group-Renamed"
+        val msg = ControlMessage(
+            type = ControlMessageType.GROUP_INVITE,
+            chatId = chatId, groupName = updatedTitle, members = emptyList(),
+            targetEmail = null, requesterEmail = null
+        ).toJson()
+        handler.handle(msg, fromEmail = "me-alt3@y.ru")
+        assertEquals("Re-invite от alias-админа должен обновить title",
+            updatedTitle, chatDao.getById(chatId)?.title)
+    }
+
     // ── H2: MEMBER_REMOVED auth (security audit 2026-05-07) ────────────────
 
     @Test

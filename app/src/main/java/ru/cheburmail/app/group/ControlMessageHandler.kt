@@ -111,9 +111,10 @@ class ControlMessageHandler(
             Log.i(TAG, "Создан групповой чат '${msg.groupName}' (${msg.chatId}) admin=$fromEmail")
         } else {
             // Если fromEmail задан и created_by уже зафиксирован — invite должен
-            // быть от него же. Иначе это попытка hijack admin-роли — игнорируем.
+            // быть от него (с учётом alias через isFromAdmin). Иначе это
+            // попытка hijack admin-роли — игнорируем.
             if (fromEmail != null && existingChat.createdBy != null &&
-                !existingChat.createdBy.equals(fromEmail, ignoreCase = true)) {
+                !isFromAdmin(existingChat, fromEmail)) {
                 Log.w(TAG, "GROUP_INVITE для ${msg.chatId} от $fromEmail, " +
                     "но admin = ${existingChat.createdBy}. Игнорируем.")
                 return
@@ -331,7 +332,7 @@ class ControlMessageHandler(
         }
 
         val chat = chatDao.getById(msg.chatId) ?: return
-        if (fromEmail != null && !chat.createdBy.equals(fromEmail, ignoreCase = true)) {
+        if (!isFromAdmin(chat, fromEmail)) {
             Log.w(TAG, "MEMBER_ADD_APPROVED от $fromEmail, но admin=${chat.createdBy}. Игнорируем.")
             return
         }
@@ -355,7 +356,7 @@ class ControlMessageHandler(
         }
 
         val chat = chatDao.getById(msg.chatId) ?: return
-        if (fromEmail != null && !chat.createdBy.equals(fromEmail, ignoreCase = true)) {
+        if (!isFromAdmin(chat, fromEmail)) {
             Log.w(TAG, "MEMBER_ADD_REJECTED от $fromEmail, но admin=${chat.createdBy}. Игнорируем.")
             return
         }
