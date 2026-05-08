@@ -22,10 +22,14 @@ import ru.cheburmail.app.security.AppLockManager
 import ru.cheburmail.app.ui.lock.LockScreen
 import ru.cheburmail.app.ui.navigation.AppNavigation
 import ru.cheburmail.app.ui.theme.CheburMailTheme
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ProcessLifecycleOwner
 
 class MainActivity : FragmentActivity() {
 
@@ -71,6 +75,23 @@ class MainActivity : FragmentActivity() {
             CheburMailTheme {
                 var isLocked by remember {
                     mutableStateOf(appLockManager.isLockEnabled)
+                }
+
+                // Re-lock когда приложение уходит в background (S4 audit-v2):
+                // если PIN включён, на ON_STOP помечаем locked; на ON_START
+                // юзер увидит LockScreen. Без этого после одного unlock можно
+                // свернуть/развернуть и попасть сразу в чаты.
+                DisposableEffect(Unit) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_STOP &&
+                            appLockManager.isLockEnabled
+                        ) {
+                            isLocked = true
+                        }
+                    }
+                    val owner = ProcessLifecycleOwner.get()
+                    owner.lifecycle.addObserver(observer)
+                    onDispose { owner.lifecycle.removeObserver(observer) }
                 }
 
                 if (isLocked) {

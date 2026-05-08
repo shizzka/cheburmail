@@ -108,6 +108,7 @@ dependencies {
     implementation(libs.appcompat)
     implementation(libs.lifecycle.runtime.ktx)
     implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.lifecycle.process)
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.navigation.compose)
 

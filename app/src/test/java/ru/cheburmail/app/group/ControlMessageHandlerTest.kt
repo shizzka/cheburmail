@@ -305,10 +305,11 @@ class ControlMessageHandlerTest {
     }
 
     @Test
-    fun memberRemoved_selfTarget_legacyGroupNoCreatedBy_allowed() = runBlocking {
-        // Legacy chat без createdBy — fallback позволяет self-remove даже
-        // без admin, чтобы юзер мог покинуть сломанный чат. Documented
-        // intentional compromise.
+    fun memberRemoved_selfTarget_legacyGroupNoCreatedBy_rejected() = runBlocking {
+        // Legacy без admin metadata — remote MEMBER_REMOVED полностью
+        // отвергается, даже self-target. DoS-защита: любой known-контакт мог
+        // бы прислать жертве "ты удалена" и стереть локальный чат. Юзер
+        // удаляет legacy-чат вручную из UI если нужно.
         val legacyId = "legacy-chat"
         chatDao.insert(ChatEntity(
             id = legacyId, type = ChatType.GROUP, title = "Legacy",
@@ -319,15 +320,15 @@ class ControlMessageHandlerTest {
             chatId = legacyId, groupName = "Legacy", members = emptyList(),
             targetEmail = me, requesterEmail = null
         ).toJson()
-        handler.handle(msg, fromEmail = mallory) // unrelated sender
-        assertNull("Legacy self-remove fallback работает",
+        handler.handle(msg, fromEmail = mallory)
+        // Чат должен ОСТАТЬСЯ — legacy self-remove не работает
+        assertNotNull("Legacy MEMBER_REMOVED self-target должен быть отвергнут (DoS-защита)",
             chatDao.getById(legacyId))
     }
 
     @Test
-    fun memberRemoved_otherTarget_legacyGroupNoCreatedBy_ignored() = runBlocking {
-        // Legacy без admin: разрешён ТОЛЬКО self-remove.
-        // Любой не-self-target в legacy игнорируется (нет authoritative источника).
+    fun memberRemoved_otherTarget_legacyGroupNoCreatedBy_rejected() = runBlocking {
+        // Legacy: любой target отвергается, не только не-self.
         val legacyId = "legacy-chat-2"
         chatDao.insert(ChatEntity(
             id = legacyId, type = ChatType.GROUP, title = "Legacy2",
@@ -342,9 +343,35 @@ class ControlMessageHandlerTest {
             targetEmail = alice, requesterEmail = null
         ).toJson()
         handler.handle(msg, fromEmail = mallory)
-        // Alice осталась
         val members = chatDao.getMembersForChat(legacyId)
         assertTrue("В legacy non-self-target не удаляется",
+            members.any { it.contactId == aliceId })
+    }
+
+    @Test
+    fun memberRemoved_fromAliasOfAdmin_canonicalizedAndAllowed() = runBlocking {
+        // Admin (me) пишет MEMBER_REMOVED с alias-аккаунта (me-alt@y.ru).
+        // isFromAdmin должен canonicalize fromEmail через alias lookup и
+        // признать его admin'ом (тот же contact_id).
+        val meAlt = "me-alt@y.ru"
+        val meContactId = contactDao.insert(verified(0L, me, "Me-self"))
+        contactDao.insertAlias(
+            ru.cheburmail.app.db.entity.ContactAliasEntity(
+                contactId = meContactId, email = meAlt,
+                source = ru.cheburmail.app.db.entity.ContactAliasEntity.SOURCE_LEARNED,
+                addedAt = now
+            )
+        )
+        val aliceId = contactDao.getByEmail(alice)!!.id
+        val msg = ControlMessage(
+            type = ControlMessageType.MEMBER_REMOVED,
+            chatId = chatId, groupName = "Group", members = emptyList(),
+            targetEmail = alice, requesterEmail = null
+        ).toJson()
+        // fromEmail = alias админа (me-alt@y.ru), admin в chat.createdBy = me
+        handler.handle(msg, fromEmail = meAlt)
+        val members = chatDao.getMembersForChat(chatId)
+        assertFalse("Alias admin'а должен быть распознан и удалить участника",
             members.any { it.contactId == aliceId })
     }
 
@@ -389,6 +416,8 @@ class ControlMessageHandlerTest {
 
     private class FakeContactDao : ru.cheburmail.app.db.dao.ContactDao {
         val contacts = mutableMapOf<Long, ContactEntity>()
+        // Aliases: email (lowercase) → ContactAliasEntity
+        val aliases = mutableMapOf<String, ru.cheburmail.app.db.entity.ContactAliasEntity>()
         var nextId = 1L
         override suspend fun insert(contact: ContactEntity): Long {
             val id = if (contact.id == 0L) nextId++ else contact.id
@@ -403,15 +432,26 @@ class ControlMessageHandlerTest {
         override suspend fun update(contact: ContactEntity) { contacts[contact.id] = contact }
         override suspend fun delete(contact: ContactEntity) { contacts.remove(contact.id) }
         override suspend fun deleteById(id: Long) { contacts.remove(id) }
-        override suspend fun getByEmailOrAlias(email: String) = getByEmail(email)
+        override suspend fun getByEmailOrAlias(email: String): ContactEntity? {
+            // Сначала primary email, потом alias map
+            getByEmail(email)?.let { return it }
+            val alias = aliases[email.lowercase()] ?: return null
+            return contacts[alias.contactId]
+        }
         override suspend fun getByPublicKey(publicKey: ByteArray) =
             contacts.values.find { it.publicKey.contentEquals(publicKey) }
-        override suspend fun insertAlias(alias: ru.cheburmail.app.db.entity.ContactAliasEntity): Long = 0L
-        override suspend fun getAliases(contactId: Long): List<ru.cheburmail.app.db.entity.ContactAliasEntity> = emptyList()
-        override suspend fun getAliasEmails(contactId: Long): List<String> = emptyList()
-        override suspend fun getAliasByEmail(email: String): ru.cheburmail.app.db.entity.ContactAliasEntity? = null
-        override suspend fun deleteAlias(contactId: Long, email: String) {}
-
+        override suspend fun insertAlias(alias: ru.cheburmail.app.db.entity.ContactAliasEntity): Long {
+            aliases[alias.email.lowercase()] = alias
+            return 0L
+        }
+        override suspend fun getAliases(contactId: Long) =
+            aliases.values.filter { it.contactId == contactId }
+        override suspend fun getAliasEmails(contactId: Long) =
+            aliases.values.filter { it.contactId == contactId }.map { it.email }
+        override suspend fun getAliasByEmail(email: String) = aliases[email.lowercase()]
+        override suspend fun deleteAlias(contactId: Long, email: String) {
+            aliases.remove(email.lowercase())
+        }
     }
 
     private class FakePendingAddRequestDao : ru.cheburmail.app.db.dao.PendingAddRequestDao {
