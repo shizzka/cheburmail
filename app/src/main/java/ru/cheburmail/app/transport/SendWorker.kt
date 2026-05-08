@@ -81,7 +81,7 @@ class SendWorker(
             }
 
             // Get recipient contact
-            val contact = contactDao.getByEmail(entry.recipientEmail)
+            val contact = contactDao.getByEmailOrAlias(entry.recipientEmail)
             if (contact == null) {
                 Log.e(TAG, "Contact ${entry.recipientEmail} not found, marking FAILED")
                 sendQueueDao.updateStatus(entry.id, QueueStatus.FAILED)
@@ -229,7 +229,7 @@ class SendWorker(
 
         return try {
             val message = messageDao.getByIdOnce(entry.messageId) ?: return false
-            val contact = contactDao.getByEmail(entry.recipientEmail) ?: return false
+            val contact = contactDao.getByEmailOrAlias(entry.recipientEmail) ?: return false
             val payload = if (entry.payloadFilePath != null) {
                 java.io.File(entry.payloadFilePath).readBytes()
             } else {

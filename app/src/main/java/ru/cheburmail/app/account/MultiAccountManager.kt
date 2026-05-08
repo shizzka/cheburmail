@@ -41,12 +41,14 @@ class MultiAccountManager(
     fun health(): SmtpHealthTracker = healthTracker
 
     /**
-     * События отправки — для snackbar и UI-индикаторов. Replay=0,
-     * extraBufferCapacity=8 (DROP_OLDEST) чтобы не блокировать SendWorker
-     * если UI отвалился.
+     * События отправки — для snackbar и UI-индикаторов. Replay=1, чтобы
+     * последнее событие получили подписчики, которые подключились ПОСЛЕ
+     * эмита (например, юзер вернулся в ChatList после fallback-отправки).
+     * Без этого snackbar терялся если в момент эмита экрана не было.
+     * extraBufferCapacity=8 (DROP_OLDEST) — не блокируем SendWorker.
      */
     private val _events = MutableSharedFlow<SendEvent>(
-        replay = 0,
+        replay = 1,
         extraBufferCapacity = 8,
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )

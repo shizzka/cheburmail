@@ -367,6 +367,10 @@ fun AppNavigation(
             SettingsScreen(
                 viewModel = settingsViewModel,
                 onAddAccount = {
+                    // VM может остаться isComplete=true после первого
+                    // успешного onboarding'а; сбрасываем ДО navigate, чтобы
+                    // экран не моментально вернулся обратно через onComplete()
+                    onboardingViewModel.reset()
                     navController.navigate(Routes.ONBOARDING)
                 },
                 onOpenDiagnostics = {

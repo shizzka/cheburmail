@@ -72,7 +72,7 @@ class MessageRepository(
         messageDao.insert(messageEntity)
 
         // 2. Get recipient public key
-        val contact = contactDao.getByEmail(recipientEmail)
+        val contact = contactDao.getByEmailOrAlias(recipientEmail)
             ?: throw IllegalStateException("Contact not found for $recipientEmail")
 
         // 3. Encrypt

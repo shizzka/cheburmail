@@ -1,6 +1,7 @@
 package ru.cheburmail.app.transport
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Before
 import org.junit.Test
 import ru.cheburmail.app.crypto.CryptoConstants
@@ -41,15 +42,16 @@ class ReceiveWorkerTest {
 
     private class FakeDecryptor : MessageDecryptor(FakeBoxNative()) {
         var shouldThrowFor: Set<String> = emptySet() // msgUuids that should fail
+        /** Кастомный plaintext: маркер из ciphertext[0] → bytes. */
+        var customResponses: Map<Byte, ByteArray> = emptyMap()
 
         override fun decrypt(
             envelope: EncryptedEnvelope,
             senderPublicKey: ByteArray,
             recipientPrivateKey: ByteArray
         ): ByteArray {
-            // We check via a hack: the ciphertext contains a marker
-            // But actually we need to match by something. Let's just always succeed unless flagged.
-            return "decrypted-text".toByteArray()
+            val marker = envelope.ciphertext.firstOrNull() ?: 0
+            return customResponses[marker] ?: "decrypted-text".toByteArray()
         }
     }
 
@@ -291,6 +293,195 @@ class ReceiveWorkerTest {
         assertEquals(1, count)
         assertEquals(true, messageDao.messages.containsKey("uuid-2"))
         assertEquals(false, messageDao.messages.containsKey("uuid-1"))
+    }
+
+    // ── H1: DELETE-команда требует авторизации (security audit 2026-05-07) ──
+
+    /**
+     * Подготавливает worker и инсёртит target-message с указанным author/chat.
+     * Возвращает (worker, contactAlice, contactBob, expectedChatId).
+     */
+    private suspend fun deleteAuthSetup(
+        targetIsOutgoing: Boolean = false,
+        targetSenderEmail: String = "alice@yandex.ru",
+        targetChatIdMarker: String? = null
+    ): Triple<ReceiveWorker, ContactEntity, String> {
+        val now = System.currentTimeMillis()
+        val alice = ContactEntity(
+            id = 1, email = "alice@yandex.ru", displayName = "Alice",
+            publicKey = ByteArray(32) { 1 }, fingerprint = "fp-a",
+            trustStatus = TrustStatus.VERIFIED, createdAt = now, updatedAt = now
+        )
+        val bob = ContactEntity(
+            id = 2, email = "bob@yandex.ru", displayName = "Bob",
+            publicKey = ByteArray(32) { 2 }, fingerprint = "fp-b",
+            trustStatus = TrustStatus.VERIFIED, createdAt = now, updatedAt = now
+        )
+        contactDao.contacts["alice@yandex.ru"] = alice
+        contactDao.contacts["bob@yandex.ru"] = bob
+
+        // ChatId как ReceiveWorker его вычислит: directChatId(self, contact)
+        val realChatId = ru.cheburmail.app.messaging.ChatIdGenerator.directChatId(
+            "me@yandex.ru", "alice@yandex.ru"
+        )
+        val targetChatId = targetChatIdMarker ?: realChatId
+
+        // Целевое сообщение для удаления
+        val senderContactId = contactDao.contacts[targetSenderEmail]?.id ?: 1L
+        messageDao.messages["target-msg"] = MessageEntity(
+            id = "target-msg", chatId = targetChatId,
+            senderContactId = if (targetIsOutgoing) null else senderContactId,
+            isOutgoing = targetIsOutgoing,
+            plaintext = "hi", status = MessageStatus.RECEIVED, timestamp = now
+        )
+
+        // Worker — использует общие fakes setup'а
+        val transportService = TransportService(
+            smtpClient = SmtpClient(),
+            imapClient = FakeImapClient(),  // зальём ниже
+            emailFormatter = EmailFormatter(),
+            emailParser = EmailParser(),
+            encryptor = FakeEncryptor(),
+            decryptor = fakeDecryptor
+        )
+        val worker = ReceiveWorker(
+            transportService = transportService,
+            decryptor = fakeDecryptor,
+            retryStrategy = RetryStrategy(),
+            messageDao = messageDao,
+            contactDao = contactDao,
+            recipientPrivateKey = recipientPrivateKey,
+            emailConfig = config,
+            primaryEmail = "me@yandex.ru"
+        )
+        return Triple(worker, alice, realChatId)
+    }
+
+    private fun makeDeleteEmail(
+        fromEmail: String,
+        msgChatId: String,
+        msgUuid: String,
+        marker: Byte,
+        targetMsgIdInPlaintext: String
+    ): EmailMessage {
+        val envelope = EncryptedEnvelope(
+            nonce = ByteArray(CryptoConstants.NONCE_BYTES) { 1 },
+            ciphertext = ByteArray(32) { if (it == 0) marker else 0 }
+        )
+        return EmailFormatter().format(envelope, msgChatId, msgUuid, fromEmail, "me@yandex.ru")
+    }
+
+    @Test
+    fun delete_byAuthor_inSameChat_succeeds() = runBlocking {
+        val (worker, alice, realChatId) = deleteAuthSetup()
+        val marker: Byte = 0x10
+        fakeDecryptor.customResponses = mapOf(marker to "DELETE:target-msg".toByteArray())
+
+        val deleteCmd = makeDeleteEmail(
+            fromEmail = "alice@yandex.ru",
+            msgChatId = realChatId,
+            msgUuid = "del-cmd-1",
+            marker = marker,
+            targetMsgIdInPlaintext = "target-msg"
+        )
+        val transport = TransportService(
+            SmtpClient(), FakeImapClient(listOf(deleteCmd)),
+            EmailFormatter(), EmailParser(), FakeEncryptor(), fakeDecryptor
+        )
+        val w = ReceiveWorker(
+            transportService = transport, decryptor = fakeDecryptor,
+            retryStrategy = RetryStrategy(), messageDao = messageDao,
+            contactDao = contactDao, recipientPrivateKey = recipientPrivateKey,
+            emailConfig = config, primaryEmail = "me@yandex.ru"
+        )
+        w.pollAndProcess(config)
+        assertEquals("Сообщение должно быть удалено автором",
+            null, messageDao.messages["target-msg"])
+    }
+
+    @Test
+    fun delete_byNonAuthor_inSameChat_ignored() = runBlocking {
+        val (_, _, realChatId) = deleteAuthSetup()
+        val marker: Byte = 0x11
+        fakeDecryptor.customResponses = mapOf(marker to "DELETE:target-msg".toByteArray())
+
+        val deleteCmd = makeDeleteEmail(
+            fromEmail = "bob@yandex.ru", // bob не автор target-msg (автор alice)
+            msgChatId = realChatId,
+            msgUuid = "del-cmd-2",
+            marker = marker,
+            targetMsgIdInPlaintext = "target-msg"
+        )
+        val transport = TransportService(
+            SmtpClient(), FakeImapClient(listOf(deleteCmd)),
+            EmailFormatter(), EmailParser(), FakeEncryptor(), fakeDecryptor
+        )
+        val w = ReceiveWorker(
+            transportService = transport, decryptor = fakeDecryptor,
+            retryStrategy = RetryStrategy(), messageDao = messageDao,
+            contactDao = contactDao, recipientPrivateKey = recipientPrivateKey,
+            emailConfig = config, primaryEmail = "me@yandex.ru"
+        )
+        w.pollAndProcess(config)
+        assertNotNull("Bob не автор — DELETE отклонён",
+            messageDao.messages["target-msg"])
+    }
+
+    @Test
+    fun delete_outgoingMessage_ignored() = runBlocking {
+        val (_, _, realChatId) = deleteAuthSetup(targetIsOutgoing = true)
+        val marker: Byte = 0x12
+        fakeDecryptor.customResponses = mapOf(marker to "DELETE:target-msg".toByteArray())
+
+        val deleteCmd = makeDeleteEmail(
+            fromEmail = "alice@yandex.ru",
+            msgChatId = realChatId,
+            msgUuid = "del-cmd-3",
+            marker = marker,
+            targetMsgIdInPlaintext = "target-msg"
+        )
+        val transport = TransportService(
+            SmtpClient(), FakeImapClient(listOf(deleteCmd)),
+            EmailFormatter(), EmailParser(), FakeEncryptor(), fakeDecryptor
+        )
+        val w = ReceiveWorker(
+            transportService = transport, decryptor = fakeDecryptor,
+            retryStrategy = RetryStrategy(), messageDao = messageDao,
+            contactDao = contactDao, recipientPrivateKey = recipientPrivateKey,
+            emailConfig = config, primaryEmail = "me@yandex.ru"
+        )
+        w.pollAndProcess(config)
+        assertNotNull("Outgoing наше сообщение не может быть удалено remote",
+            messageDao.messages["target-msg"])
+    }
+
+    @Test
+    fun delete_differentChat_ignored() = runBlocking {
+        // target-msg в другом чате
+        val (_, _, realChatId) = deleteAuthSetup(targetChatIdMarker = "wrong-chat")
+        val marker: Byte = 0x13
+        fakeDecryptor.customResponses = mapOf(marker to "DELETE:target-msg".toByteArray())
+
+        val deleteCmd = makeDeleteEmail(
+            fromEmail = "alice@yandex.ru",
+            msgChatId = realChatId,
+            msgUuid = "del-cmd-4",
+            marker = marker,
+            targetMsgIdInPlaintext = "target-msg"
+        )
+        val transport = TransportService(
+            SmtpClient(), FakeImapClient(listOf(deleteCmd)),
+            EmailFormatter(), EmailParser(), FakeEncryptor(), fakeDecryptor
+        )
+        val w = ReceiveWorker(
+            transportService = transport, decryptor = fakeDecryptor,
+            retryStrategy = RetryStrategy(), messageDao = messageDao,
+            contactDao = contactDao, recipientPrivateKey = recipientPrivateKey,
+            emailConfig = config, primaryEmail = "me@yandex.ru"
+        )
+        w.pollAndProcess(config)
+        assertNotNull("DELETE из чужого чата не работает",
+            messageDao.messages["target-msg"])
     }
 
     @Test

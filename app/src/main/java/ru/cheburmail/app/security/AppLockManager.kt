@@ -20,10 +20,15 @@ import javax.crypto.spec.PBEKeySpec
  * После 10 fails — блок на 5 минут (и далее с экспонентой). Вычисляется
  * в [getLockoutRemainingMs] чтобы UI мог показывать таймер.
  */
-class AppLockManager private constructor(context: Context) {
+class AppLockManager internal constructor(
+    private val prefs: SharedPreferences,
+    /** Только для тестов — позволяет подменить системное время. */
+    private val clock: () -> Long = System::currentTimeMillis
+) {
 
-    private val prefs: SharedPreferences =
+    private constructor(context: Context) : this(
         context.applicationContext.getSharedPreferences("cheburmail_lock", Context.MODE_PRIVATE)
+    )
 
     val isLockEnabled: Boolean
         get() = prefs.contains(KEY_PIN_HASH) || prefs.contains(KEY_LEGACY_HASH)
@@ -65,7 +70,7 @@ class AppLockManager private constructor(context: Context) {
         // Экспоненциальный backoff поверх FAIL_THRESHOLD: 5min, 10min, 20min...
         val multiplier = 1L shl (fails - FAIL_THRESHOLD).coerceIn(0, 6)
         val lockoutMs = (LOCKOUT_BASE_MS * multiplier).coerceAtMost(LOCKOUT_MAX_MS)
-        val remaining = lockoutMs - (System.currentTimeMillis() - lastFail)
+        val remaining = lockoutMs - (clock() - lastFail)
         return remaining.coerceAtLeast(0)
     }
 
@@ -104,7 +109,7 @@ class AppLockManager private constructor(context: Context) {
             val fails = prefs.getInt(KEY_FAIL_COUNT, 0) + 1
             prefs.edit()
                 .putInt(KEY_FAIL_COUNT, fails)
-                .putLong(KEY_LAST_FAIL_AT, System.currentTimeMillis())
+                .putLong(KEY_LAST_FAIL_AT, clock())
                 .apply()
             Log.w(TAG, "verifyPin: fail #$fails")
         }

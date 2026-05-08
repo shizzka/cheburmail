@@ -468,7 +468,7 @@ class ChatViewModel(
             val email = recipientEmail ?: return@launch
             withContext(Dispatchers.IO) {
                 try {
-                    val contact = contactDao.getByEmail(email) ?: return@withContext
+                    val contact = contactDao.getByEmailOrAlias(email) ?: return@withContext
                     val keyPair = keyStorage.getOrCreateKeyPair()
                     val ls = CryptoProvider.lazySodium
                     val encryptor = MessageEncryptor(ls, NonceGenerator(ls))
@@ -599,7 +599,7 @@ class ChatViewModel(
                 }
 
                 withContext(Dispatchers.IO) {
-                    val contact = contactDao.getByEmail(email)
+                    val contact = contactDao.getByEmailOrAlias(email)
                     if (contact == null) {
                         Log.e(TAG, "Contact not found: $email")
                         messageDao.updateStatus(msgId, MessageStatus.FAILED)
@@ -968,7 +968,7 @@ class ChatViewModel(
         metadata: MediaMetadata,
         now: Long
     ) {
-        val contact = contactDao.getByEmail(recipientEmail) ?: run {
+        val contact = contactDao.getByEmailOrAlias(recipientEmail) ?: run {
             Log.e(TAG, "Contact not found: $recipientEmail")
             return
         }

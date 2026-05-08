@@ -114,6 +114,16 @@ class SyncFactory(private val context: Context) {
             pendingAddRequestDao = db.pendingAddRequestDao()
         )
 
+        // Primary email (первый сохранённый аккаунт) — canonical-side для
+        // ChatIdGenerator. Без этого если пользователь имеет 2 аккаунта и
+        // ReceiveWorker запускается для не-первого, chatId разойдётся с
+        // отправителем, который у себя считает по primary.
+        val primaryEmail = runCatching {
+            kotlinx.coroutines.runBlocking {
+                accountRepo.getAll().first().firstOrNull()?.email
+            }
+        }.getOrNull() ?: config.email
+
         return ReceiveWorker(
             transportService = transportService,
             decryptor = decryptor,
@@ -125,6 +135,7 @@ class SyncFactory(private val context: Context) {
             recipientPrivateKey = privateKey,
             keyExchangeManager = keyExchangeManager,
             emailConfig = config,
+            primaryEmail = primaryEmail,
             mediaDecryptor = mediaDecryptor,
             mediaFileManager = mediaFileManager,
             controlMessageHandler = controlMessageHandler,

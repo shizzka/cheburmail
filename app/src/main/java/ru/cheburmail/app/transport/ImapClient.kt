@@ -52,10 +52,25 @@ open class ImapClient {
      * @throws TransportException.ImapException on errors
      */
     open fun fetchMessages(config: EmailConfig): List<EmailMessage> {
+        // Stuck-fetch detection: если предыдущий holder висит дольше
+        // STUCK_FETCH_TIMEOUT_MS (90 сек), считаем его deadlock'нутым
+        // и interrupt'им — иначе все последующие fetch'и забивают tryLock.
+        val prevHolder = lockHolder
+        val prevAcquiredAt = lockAcquiredAt
+        if (prevHolder != null && prevAcquiredAt > 0 &&
+            System.currentTimeMillis() - prevAcquiredAt > STUCK_FETCH_TIMEOUT_MS
+        ) {
+            Log.w(TAG, "Stuck fetch detected: thread=${prevHolder.name} " +
+                "holding lock ${(System.currentTimeMillis() - prevAcquiredAt) / 1000}с — interrupting")
+            try { prevHolder.interrupt() } catch (_: SecurityException) {}
+        }
+
         if (!FETCH_LOCK.tryLock(30, TimeUnit.SECONDS)) {
             Log.d(TAG, "fetchMessages skipped — another fetch is in progress (30s timeout)")
             return emptyList()
         }
+        lockHolder = Thread.currentThread()
+        lockAcquiredAt = System.currentTimeMillis()
         var store: Store? = null
         try {
             store = connectStore(config)
@@ -145,7 +160,9 @@ open class ImapClient {
         } catch (e: Exception) {
             throw TransportException.ImapException("IMAP fetch failed: ${e.message}", e)
         } finally {
-            store?.close()
+            try { store?.close() } catch (_: Exception) {}
+            lockHolder = null
+            lockAcquiredAt = 0
             FETCH_LOCK.unlock()
         }
     }
@@ -404,6 +421,10 @@ open class ImapClient {
         private const val MAX_MESSAGE_SIZE = 50 * 1024 * 1024 // 50MB
         /** Prevents parallel IMAP fetches from multiple callers. */
         private val FETCH_LOCK = ReentrantLock()
+        /** Если holder держит lock дольше — считаем deadlock и interrupt'им. */
+        private const val STUCK_FETCH_TIMEOUT_MS = 90_000L
+        @Volatile private var lockHolder: Thread? = null
+        @Volatile private var lockAcquiredAt: Long = 0
 
         /**
          * Match a CheburMail subject against an identifier (msgUuid/kex-uuid).

@@ -209,7 +209,7 @@ class ControlMessageHandler(
             return
         }
 
-        val contact = contactDao.getByEmail(target)
+        val contact = contactDao.getByEmailOrAlias(target)
         if (contact == null) {
             Log.w(TAG, "Контакт $target не найден для удаления из группы")
             return
@@ -259,7 +259,7 @@ class ControlMessageHandler(
             return
         }
         // Запросчик должен быть verified-членом группы у меня
-        val requesterContact = contactDao.getByEmail(requester)
+        val requesterContact = contactDao.getByEmailOrAlias(requester)
         if (requesterContact == null) {
             Log.w(TAG, "MEMBER_ADD_REQUEST: requester $requester не в моих контактах")
             return
@@ -275,7 +275,7 @@ class ControlMessageHandler(
         }
 
         // target не должен уже быть в группе
-        val targetContact = contactDao.getByEmail(target)
+        val targetContact = contactDao.getByEmailOrAlias(target)
         if (targetContact != null && members.any { it.contactId == targetContact.id }) {
             Log.w(TAG, "MEMBER_ADD_REQUEST: target $target уже в группе, игнорируем")
             return
@@ -370,7 +370,7 @@ class ControlMessageHandler(
             Log.d(TAG, "Пропускаем self (${memberInfo.email}) в members")
             return
         }
-        var contact = contactDao.getByEmail(memberInfo.email)
+        var contact = contactDao.getByEmailOrAlias(memberInfo.email)
         if (contact == null) {
             // Создать новый контакт из данных управляющего сообщения.
             // Вычисляем fingerprint сразу, чтобы UI сразу показывал safety number и

@@ -1,26 +1,24 @@
 package ru.cheburmail.app.ui.onboarding
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 
 /**
  * Корневой экран онбординга.
  * Маршрутизирует между шагами мастера настройки аккаунта.
+ *
+ * Сброс VM при повторном заходе (добавление 2-го/3-го аккаунта) делается
+ * в навигаторе (AppNavigation.onAddAccount) ДО navigate, чтобы при
+ * входе на экран `isComplete` уже было false — иначе экран успеет вызвать
+ * onComplete() до запуска любого in-composition reset (см. lint blocker
+ * RememberReturnType + race в audit-v2).
  */
 @Composable
 fun OnboardingScreen(
     viewModel: OnboardingViewModel,
     onComplete: () -> Unit
 ) {
-    // При входе в экран сбрасываем VM — нужно для повторного захода
-    // (добавление 2-го/3-го аккаунта из Настроек). Без reset() второй вход
-    // выдаст isComplete=true и сразу onComplete() → юзер не успевает выбрать
-    // провайдера.
-    remember { viewModel.reset(); Unit }
-
     val currentStep by viewModel.currentStep.collectAsState()
     val isComplete by viewModel.isComplete.collectAsState()
 

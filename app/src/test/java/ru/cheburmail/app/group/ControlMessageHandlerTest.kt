@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -236,6 +237,115 @@ class ControlMessageHandlerTest {
         ).toJson()
         handler.handle(msg, fromEmail = me)
         assertNull(pendingDao.get(chatId, bob))
+    }
+
+    // ── H2: MEMBER_REMOVED auth (security audit 2026-05-07) ────────────────
+
+    @Test
+    fun memberRemoved_selfTarget_fromNonAdmin_inAdminGroup_ignored() = runBlocking {
+        // Раньше любой контакт мог отправить MEMBER_REMOVED с target=selfEmail
+        // и заставить жертву удалить локальный чат. Теперь admin check ДО
+        // self-remove — для групп с createdBy.
+        // setup() создаёт chat с createdBy=me=alice пишет ATTACK для me
+        val attackerHandler = ControlMessageHandler(
+            chatDao = chatDao, contactDao = contactDao, selfEmail = me,
+            pendingAddRequestDao = pendingDao
+        )
+        val msg = ControlMessage(
+            type = ControlMessageType.MEMBER_REMOVED,
+            chatId = chatId, groupName = "Group", members = emptyList(),
+            targetEmail = me, requesterEmail = null
+        ).toJson()
+        attackerHandler.handle(msg, fromEmail = alice) // alice не admin (admin = me)
+        // Чат должен остаться
+        assertNotNull(chatDao.getById(chatId))
+    }
+
+    @Test
+    fun memberRemoved_selfTarget_fromAdmin_deletesChat() = runBlocking {
+        // admin (me) сам себя удаляет — fromEmail=me, target=me → OK
+        val msg = ControlMessage(
+            type = ControlMessageType.MEMBER_REMOVED,
+            chatId = chatId, groupName = "Group", members = emptyList(),
+            targetEmail = me, requesterEmail = null
+        ).toJson()
+        handler.handle(msg, fromEmail = me)
+        // Чат должен быть удалён
+        assertNull(chatDao.getById(chatId))
+    }
+
+    @Test
+    fun memberRemoved_otherTarget_fromNonAdmin_ignored() = runBlocking {
+        // Mallory не admin (admin=me), пытается удалить Alice → отклонено
+        val msg = ControlMessage(
+            type = ControlMessageType.MEMBER_REMOVED,
+            chatId = chatId, groupName = "Group", members = emptyList(),
+            targetEmail = alice, requesterEmail = null
+        ).toJson()
+        handler.handle(msg, fromEmail = mallory)
+        val aliceId = contactDao.getByEmail(alice)!!.id
+        val members = chatDao.getMembersForChat(chatId)
+        assertTrue("Alice должна остаться в группе",
+            members.any { it.contactId == aliceId })
+    }
+
+    @Test
+    fun memberRemoved_otherTarget_fromAdmin_removes() = runBlocking {
+        // admin удаляет alice → должна выйти
+        val aliceId = contactDao.getByEmail(alice)!!.id
+        val msg = ControlMessage(
+            type = ControlMessageType.MEMBER_REMOVED,
+            chatId = chatId, groupName = "Group", members = emptyList(),
+            targetEmail = alice, requesterEmail = null
+        ).toJson()
+        handler.handle(msg, fromEmail = me)
+        val members = chatDao.getMembersForChat(chatId)
+        assertFalse("Alice удалена admin'ом",
+            members.any { it.contactId == aliceId })
+    }
+
+    @Test
+    fun memberRemoved_selfTarget_legacyGroupNoCreatedBy_allowed() = runBlocking {
+        // Legacy chat без createdBy — fallback позволяет self-remove даже
+        // без admin, чтобы юзер мог покинуть сломанный чат. Documented
+        // intentional compromise.
+        val legacyId = "legacy-chat"
+        chatDao.insert(ChatEntity(
+            id = legacyId, type = ChatType.GROUP, title = "Legacy",
+            createdAt = now, updatedAt = now, createdBy = null
+        ))
+        val msg = ControlMessage(
+            type = ControlMessageType.MEMBER_REMOVED,
+            chatId = legacyId, groupName = "Legacy", members = emptyList(),
+            targetEmail = me, requesterEmail = null
+        ).toJson()
+        handler.handle(msg, fromEmail = mallory) // unrelated sender
+        assertNull("Legacy self-remove fallback работает",
+            chatDao.getById(legacyId))
+    }
+
+    @Test
+    fun memberRemoved_otherTarget_legacyGroupNoCreatedBy_ignored() = runBlocking {
+        // Legacy без admin: разрешён ТОЛЬКО self-remove.
+        // Любой не-self-target в legacy игнорируется (нет authoritative источника).
+        val legacyId = "legacy-chat-2"
+        chatDao.insert(ChatEntity(
+            id = legacyId, type = ChatType.GROUP, title = "Legacy2",
+            createdAt = now, updatedAt = now, createdBy = null
+        ))
+        val aliceId = contactDao.getByEmail(alice)!!.id
+        chatDao.insertMember(ChatMemberEntity(legacyId, aliceId, now))
+
+        val msg = ControlMessage(
+            type = ControlMessageType.MEMBER_REMOVED,
+            chatId = legacyId, groupName = "Legacy2", members = emptyList(),
+            targetEmail = alice, requesterEmail = null
+        ).toJson()
+        handler.handle(msg, fromEmail = mallory)
+        // Alice осталась
+        val members = chatDao.getMembersForChat(legacyId)
+        assertTrue("В legacy non-self-target не удаляется",
+            members.any { it.contactId == aliceId })
     }
 
     // ── helpers ─────────────────────────────────────────────────

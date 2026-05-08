@@ -138,7 +138,7 @@ open class GroupMessageSender(
             return false
         }
 
-        val recipient = contactDao.getByEmail(recipientEmail)
+        val recipient = contactDao.getByEmailOrAlias(recipientEmail)
         if (recipient == null) {
             Log.e(TAG, "sendControlToAdmin: контакт $recipientEmail не найден, не отправляем")
             return false

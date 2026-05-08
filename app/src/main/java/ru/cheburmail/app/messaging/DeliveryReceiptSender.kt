@@ -45,7 +45,7 @@ class DeliveryReceiptSender(
     ) {
         try {
             // Получаем публичный ключ отправителя для шифрования ACK
-            val contact = contactDao.getByEmail(senderEmail) ?: run {
+            val contact = contactDao.getByEmailOrAlias(senderEmail) ?: run {
                 Log.w(TAG, "Контакт не найден, ACK не отправлен")
                 return
             }

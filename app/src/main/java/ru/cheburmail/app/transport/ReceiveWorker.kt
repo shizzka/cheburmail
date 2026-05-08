@@ -18,7 +18,6 @@ import ru.cheburmail.app.media.MediaDecryptor
 import ru.cheburmail.app.media.MediaFileManager
 import ru.cheburmail.app.media.MediaMetadata
 import ru.cheburmail.app.messaging.ChatIdGenerator
-import ru.cheburmail.app.messaging.DeliveryReceiptHandler
 import ru.cheburmail.app.messaging.DeliveryReceiptSender
 import ru.cheburmail.app.messaging.KeyExchangeManager
 import ru.cheburmail.app.messaging.ReactiveKeyexGate
@@ -50,14 +49,23 @@ class ReceiveWorker(
     private val notificationHelper: NotificationHelper? = null,
     private val recipientPrivateKey: ByteArray,
     private val deliveryReceiptSender: DeliveryReceiptSender? = null,
-    private val deliveryReceiptHandler: DeliveryReceiptHandler? = null,
     private val controlMessageHandler: ControlMessageHandler? = null,
     private val keyExchangeManager: KeyExchangeManager? = null,
     private val emailConfig: EmailConfig? = null,
     private val mediaDecryptor: MediaDecryptor? = null,
     private val mediaFileManager: MediaFileManager? = null,
-    private val reactiveKeyexGate: ReactiveKeyexGate? = null
+    private val reactiveKeyexGate: ReactiveKeyexGate? = null,
+    /**
+     * Primary email юзера (первый сохранённый аккаунт). Используется как
+     * canonical-side в ChatIdGenerator.directChatId, чтобы chatId был
+     * стабилен независимо от того, через какой alias-аккаунт пришло
+     * сообщение. Если null — fallback на emailConfig.email.
+     */
+    private val primaryEmail: String? = null
 ) {
+
+    /** Primary email с fallback на emailConfig — используется для chatId. */
+    private fun selfChatEmail(): String? = primaryEmail ?: emailConfig?.email
 
     /**
      * Реактивный keyex: B получил письмо от неизвестного A (контакт после
@@ -200,7 +208,7 @@ class ReceiveWorker(
                 val correctChatId = if (existingGroupChat?.type == ChatType.GROUP) {
                     msg.chatId
                 } else if (emailConfig != null) {
-                    ChatIdGenerator.directChatId(emailConfig.email, contact.email)
+                    ChatIdGenerator.directChatId(selfChatEmail() ?: emailConfig.email, contact.email)
                 } else {
                     msg.chatId
                 }
@@ -352,7 +360,7 @@ class ReceiveWorker(
                     val correctMediaChatId = if (existingGroupChatForMedia?.type == ChatType.GROUP) {
                         mediaMsg.chatId
                     } else if (emailConfig != null) {
-                        ChatIdGenerator.directChatId(emailConfig.email, contact.email)
+                        ChatIdGenerator.directChatId(selfChatEmail() ?: emailConfig.email, contact.email)
                     } else {
                         mediaMsg.chatId
                     }

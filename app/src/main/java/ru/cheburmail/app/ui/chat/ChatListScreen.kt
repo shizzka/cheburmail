@@ -170,15 +170,15 @@ fun ChatListScreen(
             }
         }
     }
+    val whatsNewScope = androidx.compose.runtime.rememberCoroutineScope()
     if (whatsNewEntries.isNotEmpty()) {
         ru.cheburmail.app.ui.whatsnew.WhatsNewDialog(
             entries = whatsNewEntries,
             onDismiss = {
                 val list = whatsNewEntries
                 whatsNewEntries = emptyList()
-                // Запоминаем максимальный показанный versionCode
                 val maxShown = list.maxOf { it.versionCode }
-                kotlinx.coroutines.GlobalScope.launch {
+                whatsNewScope.launch {
                     ru.cheburmail.app.storage.AppSettings.getInstance(context)
                         .setLastSeenWhatsNewVersion(maxShown)
                 }

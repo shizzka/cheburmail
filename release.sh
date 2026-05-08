@@ -41,15 +41,26 @@ echo "→ Gradle $GRADLE_TASK..."
 cp "$APK_SRC" "/tmp/$APK_NAME"
 
 # Tags считаем immutable — один tag = один артефакт. Для повторной публикации
-# бампни versionCode/versionName в app/build.gradle.kts. Опция FORCE=1 перебивает
-# (пользоваться только для debug-сборок при сломанном CI).
+# бампни versionCode/versionName в app/build.gradle.kts.
+# FORCE=1 — разрешает пересоздать tag, но **только для debug-релизов**.
+# Для stable-tag overwrite требуется FORCE_STABLE_RETAG=I_UNDERSTAND
+# (явный confirm чтобы случайно не подменить опубликованный артефакт).
 if gh release view "$TAG" >/dev/null 2>&1; then
-    if [[ "${FORCE:-0}" == "1" ]]; then
-        echo "→ FORCE=1: релиз $TAG уже есть, удаляю и пересоздаю..."
+    if [[ "$MODE" == "debug" && "${FORCE:-0}" == "1" ]]; then
+        echo "→ FORCE=1 для debug: релиз $TAG уже есть, удаляю и пересоздаю..."
+        gh release delete "$TAG" --yes --cleanup-tag
+    elif [[ "$MODE" == "release" && "${FORCE_STABLE_RETAG:-}" == "I_UNDERSTAND" ]]; then
+        echo "→ FORCE_STABLE_RETAG=I_UNDERSTAND: пересоздаю STABLE релиз $TAG..."
+        echo "  Это плохая идея в 99% случаев — под'umай ещё раз перед использованием."
         gh release delete "$TAG" --yes --cleanup-tag
     else
-        echo "ERROR: релиз $TAG уже опубликован. Бампни versionCode в app/build.gradle.kts" >&2
-        echo "  или запусти с FORCE=1 (только для debug)." >&2
+        echo "ERROR: релиз $TAG уже опубликован." >&2
+        if [[ "$MODE" == "release" ]]; then
+            echo "  Stable-tag immutable. Бампни versionCode в app/build.gradle.kts." >&2
+            echo "  Если ОЧЕНЬ нужно перезалить — FORCE_STABLE_RETAG=I_UNDERSTAND ./release.sh release" >&2
+        else
+            echo "  Бампни versionCode или запусти с FORCE=1 (только для debug)." >&2
+        fi
         exit 1
     fi
 fi
