@@ -32,6 +32,15 @@ object WhatsNew {
 
     val ENTRIES: List<WhatsNewEntry> = listOf(
         WhatsNewEntry(
+            versionCode = 20,
+            versionName = "0.4.5",
+            title = "Новая иконка",
+            changes = listOf(
+                "Красный щит с символом @ — данные под защитой",
+                "Тёмный splash вместо белого — без вспышки при запуске"
+            )
+        ),
+        WhatsNewEntry(
             versionCode = 19,
             versionName = "0.4.4",
             title = "Security hardening",
