@@ -8,7 +8,10 @@ import ru.cheburmail.app.db.TrustStatus
 
 @Entity(
     tableName = "contacts",
-    indices = [Index(value = ["email"], unique = true)]
+    indices = [
+        Index(value = ["email"], unique = true),
+        Index(value = ["public_key"])
+    ]
 )
 data class ContactEntity(
     @PrimaryKey(autoGenerate = true)

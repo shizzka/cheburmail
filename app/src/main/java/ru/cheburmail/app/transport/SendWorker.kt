@@ -39,10 +39,11 @@ class SendWorker(
     private val emailConfig: EmailConfig,
     private val multiAccountManager: MultiAccountManager? = null,
     /**
-     * Если false — отключаем авто-fallback на другой аккаунт при SMTP-фейле.
-     * Юзер может выключить через настройки. Default=true.
+     * Suspend-провайдер настройки авто-fallback. Читается на каждом fallback-
+     * пути (свежее значение из DataStore). Раньше был Boolean snapshot
+     * через runBlocking{} в SyncFactory — антипаттерн в WorkManager-runtime.
      */
-    private val autoFallbackEnabled: Boolean = true
+    private val autoFallbackEnabledProvider: suspend () -> Boolean = { true }
 ) {
 
     /**
@@ -212,7 +213,7 @@ class SendWorker(
         Log.w(TAG, "SMTP fail для ${failedConfig.email}: ${originalError.message} — пробуем fallback")
 
         // Глобальный rubber-cheque: если auto-fallback отключён — не пробуем
-        if (!autoFallbackEnabled) {
+        if (!autoFallbackEnabledProvider()) {
             Log.d(TAG, "Auto-fallback отключён в настройках, пропускаем")
             return false
         }

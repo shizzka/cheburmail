@@ -82,7 +82,14 @@ import ru.cheburmail.app.db.entity.MessageEntity
 fun ChatScreen(
     viewModel: ChatViewModel,
     onBack: () -> Unit,
-    onOpenGroupInfo: () -> Unit = {}
+    onOpenGroupInfo: () -> Unit = {},
+    /**
+     * События отправки (fallback / all-failed). Если null — snackbar в этом
+     * экране не показывается. Передаётся MultiAccountManager.events так же
+     * как в ChatListScreen — иначе юзер сидящий в чате не увидит уведомление
+     * о fallback-отправке.
+     */
+    sendEvents: kotlinx.coroutines.flow.SharedFlow<ru.cheburmail.app.account.MultiAccountManager.SendEvent>? = null
 ) {
     val messages by viewModel.messages.collectAsState()
     val messagesLoaded by viewModel.messagesLoaded.collectAsState()
@@ -97,6 +104,29 @@ fun ChatScreen(
     val replyTo by viewModel.replyTo.collectAsState()
     val userError by viewModel.userError.collectAsState()
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
+
+    // Подписка на send events: показ snackbar при fallback / all-failed
+    // (дублирует логику из ChatListScreen — юзер сидящий в открытом чате
+    // тоже видит уведомление о fallback-отправке).
+    if (sendEvents != null) {
+        LaunchedEffect(sendEvents) {
+            sendEvents.collect { event ->
+                when (event) {
+                    is ru.cheburmail.app.account.MultiAccountManager.SendEvent.FallbackUsed -> {
+                        snackbarHostState.showSnackbar(
+                            "Отправлено через ${event.fallbackAccount} (SMTP ${event.originalAccount} заблокирован)"
+                        )
+                    }
+                    is ru.cheburmail.app.account.MultiAccountManager.SendEvent.AllAccountsFailed -> {
+                        snackbarHostState.showSnackbar(
+                            "Не удалось отправить: SMTP всех аккаунтов недоступен. Включи VPN или подожди."
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val showScrollToBottom by remember {

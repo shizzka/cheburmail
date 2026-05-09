@@ -205,7 +205,8 @@ fun AppNavigation(
                 onBack = { navController.popBackStack() },
                 onOpenGroupInfo = {
                     navController.navigate(Routes.groupInfo(chatId))
-                }
+                },
+                sendEvents = syncFactory.multiAccountManager().events
             )
         }
 

@@ -7,6 +7,7 @@ import ru.cheburmail.app.crypto.MessageEncryptor
 import ru.cheburmail.app.crypto.NonceGenerator
 import ru.cheburmail.app.db.CheburMailDatabase
 import ru.cheburmail.app.account.MultiAccountManager
+import ru.cheburmail.app.account.SharedPrefsHealthPersistence
 import ru.cheburmail.app.account.SmtpHealthTracker
 import ru.cheburmail.app.media.MediaDecryptor
 import ru.cheburmail.app.media.MediaFileManager
@@ -49,9 +50,12 @@ class SyncFactory(private val context: Context) {
      * не будет работать межпроцессно.
      */
     private val multiAccountManager: MultiAccountManager by lazy {
+        val healthPrefs = context.getSharedPreferences("smtp_health", Context.MODE_PRIVATE)
         MultiAccountManager(
             accountRepository = ru.cheburmail.app.repository.AccountRepository.create(context),
-            healthTracker = SmtpHealthTracker()
+            healthTracker = SmtpHealthTracker(
+                persistence = SharedPrefsHealthPersistence(healthPrefs)
+            )
         )
     }
 
@@ -149,14 +153,7 @@ class SyncFactory(private val context: Context) {
      * при SMTP-блокировке работал.
      */
     fun buildSendWorker(config: EmailConfig): SendWorker {
-        // Снимок настройки авто-fallback: блокирующий read из DataStore
-        // (это вызов в context'е WorkManager-runtime, OK).
-        val autoFallback = runCatching {
-            kotlinx.coroutines.runBlocking {
-                ru.cheburmail.app.storage.AppSettings.getInstance(context)
-                    .autoFallbackEnabled.first()
-            }
-        }.getOrDefault(true)
+        val appSettings = ru.cheburmail.app.storage.AppSettings.getInstance(context)
         return SendWorker(
             smtpClient = SmtpClient(),
             emailFormatter = EmailFormatter(),
@@ -166,7 +163,9 @@ class SyncFactory(private val context: Context) {
             contactDao = db.contactDao(),
             emailConfig = config,
             multiAccountManager = multiAccountManager,
-            autoFallbackEnabled = autoFallback
+            // Suspend provider — свежее значение из DataStore без runBlocking,
+            // читается только когда fallback-путь действительно нужен
+            autoFallbackEnabledProvider = { appSettings.autoFallbackEnabled.first() }
         )
     }
 }

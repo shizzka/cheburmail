@@ -38,7 +38,7 @@ import ru.cheburmail.app.db.entity.SendQueueEntity
         ProcessedKeyExchangeEntity::class,
         PendingAddRequestEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -53,6 +53,19 @@ abstract class CheburMailDatabase : RoomDatabase() {
 
     companion object {
         private const val DB_NAME = "cheburmail.db"
+
+        /**
+         * v10: индекс на contacts.public_key. Используется новым DAO-запросом
+         * `getByPublicKey` (multi-email identity) — раньше был full-scan.
+         */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_contacts_public_key " +
+                        "ON contacts(public_key)"
+                )
+            }
+        }
 
         /**
          * v9: multi-email identity. Таблица contact_aliases связывает один
@@ -229,7 +242,7 @@ abstract class CheburMailDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
                     MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-                    MIGRATION_7_8, MIGRATION_8_9
+                    MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10
                 )
                 .build()
         }

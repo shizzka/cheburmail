@@ -32,6 +32,17 @@ object WhatsNew {
 
     val ENTRIES: List<WhatsNewEntry> = listOf(
         WhatsNewEntry(
+            versionCode = 21,
+            versionName = "0.4.6",
+            title = "Производительность и устойчивость",
+            changes = listOf(
+                "Индекс на pub_key контактов — матчинг сообщений быстрее на больших списках",
+                "SMTP-карантин переживает OOM-kill — после рестарта повторного retry на упавший SMTP не будет",
+                "Snackbar о fallback-отправке теперь видно и в открытом чате",
+                "Убран runBlocking в WorkManager — корректное асинхронное чтение настроек"
+            )
+        ),
+        WhatsNewEntry(
             versionCode = 20,
             versionName = "0.4.5",
             title = "Новая иконка",
