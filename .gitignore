@@ -47,3 +47,4 @@ mempalace.yaml
 
 # claude-flow / ruflo runtime artifacts
 .swarm/
+keystore.properties

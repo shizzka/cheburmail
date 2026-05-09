@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -5,6 +7,20 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.room)
 }
+
+// Release keystore credentials lookup:
+// 1. ENV vars CHEBURMAIL_STORE_PASSWORD / CHEBURMAIL_KEY_PASSWORD (CI/release.sh)
+// 2. <repo>/keystore.properties (local dev, gitignored)
+// 3. Empty string (debug-only сборки не упадут на конфиге; release task упадёт
+//    с явным сообщением при попытке упаковки)
+val keystoreProps = Properties().apply {
+    val f = file("${rootProject.projectDir}/keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun keystoreCred(envKey: String, propKey: String): String =
+    System.getenv(envKey)
+        ?: keystoreProps.getProperty(propKey)
+        ?: ""
 
 android {
     namespace = "ru.cheburmail.app"
@@ -23,9 +39,9 @@ android {
         }
         create("release") {
             storeFile = file("${rootProject.projectDir}/cheburmail-release.jks")
-            storePassword = System.getenv("CHEBURMAIL_STORE_PASSWORD") ?: ""
+            storePassword = keystoreCred("CHEBURMAIL_STORE_PASSWORD", "storePassword")
             keyAlias = "cheburmail"
-            keyPassword = System.getenv("CHEBURMAIL_KEY_PASSWORD") ?: ""
+            keyPassword = keystoreCred("CHEBURMAIL_KEY_PASSWORD", "keyPassword")
             enableV1Signing = true
             enableV2Signing = true
             enableV3Signing = true

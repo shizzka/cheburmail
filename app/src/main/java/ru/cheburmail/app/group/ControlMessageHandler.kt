@@ -172,15 +172,16 @@ class ControlMessageHandler(
 
     /**
      * MEMBER_REMOVED: удалить участника из группы.
-     * Только от admin'а — включая случай "кикнули меня". Раньше self-removal
-     * выполнялся ДО проверки admin'а (любой контакт мог отправить целевой email
-     * жертвы и заставить её удалить локальный чат). Теперь сначала загружаем
-     * чат, проверяем admin, и только потом применяем self-removal или
-     * member-removal.
      *
-     * Legacy fallback: для старых групп без `chat.createdBy` (admin metadata
-     * не было известно) self-remove применяется без admin-проверки — иначе
-     * жертва не сможет покинуть сломанный чат.
+     * Авторизация — только от admin'а группы (через [isFromAdmin], с
+     * canonicalization fromEmail через alias lookup). Self-target не является
+     * исключением: иначе любой known-контакт мог бы отправить жертве
+     * `target=selfEmail` и заставить её удалить локальный чат.
+     *
+     * Для legacy-групп без `chat.createdBy` (admin неизвестен) MEMBER_REMOVED
+     * полностью отвергается — нет authoritative источника, чтобы безопасно
+     * проверить отправителя. Юзер может удалить legacy-чат вручную через UI
+     * swipe-to-delete если нужно.
      */
     private suspend fun handleMemberRemoved(msg: ControlMessage, fromEmail: String? = null) {
         val target = msg.targetEmail
