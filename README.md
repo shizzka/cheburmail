@@ -1,5 +1,12 @@
 # CheburMail
 
+> [!IMPORTANT]
+> **Project status: discontinued / proof of concept.**
+>
+> Active development has stopped. CheburMail remains public as an engineering experiment and portfolio project exploring resilient end-to-end encrypted messaging over ordinary email infrastructure.
+>
+> For practical use, see **[Delta Chat](https://delta.chat/)** — a mature open-source project built around the same core idea of using email as a transport for encrypted messaging.
+
 **End-to-end encrypted messenger for Android that runs on top of regular email.**
 
 No custom servers. No phone number required. Your messages travel through standard IMAP/SMTP (Yandex Mail, Mail.ru, Rambler), but the email provider can only see metadata — never the content.
@@ -8,10 +15,11 @@ No custom servers. No phone number required. Your messages travel through standa
 
 ## Status
 
-- **Stable**: `v0.3.8` — published on [GitHub Releases](https://github.com/shizzka/cheburmail/releases/latest)
-- **Beta**: `v0.4.6` — active development on the [`dev`](https://github.com/shizzka/cheburmail/tree/dev) branch, available as debug pre-releases via [@my_fabrica_bot](https://t.me/my_fabrica_bot)
+- **Stable release**: `v0.3.8` — available on [GitHub Releases](https://github.com/shizzka/cheburmail/releases/latest)
+- **Last experimental builds**: `v0.4.x` — preserved in the repository and pre-releases
+- **Maintenance**: no active development is planned
 
-The feature list below describes the `v0.4.6` beta. Stable `v0.3.8` is missing: Rambler provider, multi-email auto-fallback, group chats with admin approval, SQLCipher database encryption, manual key exchange, network diagnostics screen, app re-lock on background, screenshot protection. Those will land in stable once beta testing concludes.
+The feature list below documents the experimental `v0.4.x` line. It is kept for reference and portfolio purposes and should not be treated as an actively maintained secure messenger.
 
 ## Why CheburMail and not Signal / Telegram / WhatsApp?
 
