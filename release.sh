@@ -3,13 +3,14 @@
 # Usage:
 #   ./release.sh debug         — debug-ветка (prerelease, тег vN-debug)
 #   ./release.sh release       — stable-ветка (release, тег vN)
+#   ./release.sh notice        — информационный финальный release без APK
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 MODE="${1:-debug}"
-if [[ "$MODE" != "debug" && "$MODE" != "release" ]]; then
-    echo "Usage: $0 {debug|release}"; exit 1
+if [[ "$MODE" != "debug" && "$MODE" != "release" && "$MODE" != "notice" ]]; then
+    echo "Usage: $0 {debug|release|notice}"; exit 1
 fi
 
 export ANDROID_HOME=/home/q/android-sdk
@@ -18,6 +19,35 @@ export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K\d+' app/build.gradle.kts)
 VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
 echo "Версия: $VERSION_NAME (code $VERSION_CODE)"
+
+if [[ "$MODE" == "notice" ]]; then
+    TAG="v${VERSION_CODE}"
+    TITLE="${VERSION_NAME} — поддержка прекращена → Delta Chat"
+
+    cat > /tmp/cheburmail-final-notice.md <<'EOF'
+# CheburMail: поддержка прекращена
+
+Разработка CheburMail остановлена. Проект остаётся открытым как proof of concept и часть портфолио.
+
+Для практического использования рекомендуется перейти на **[Delta Chat](https://delta.chat/)** — зрелый open-source мессенджер, который также использует электронную почту как транспорт и лучше подходит для реального использования.
+
+CheburMail создавался как аварийный канал связи поверх IMAP/SMTP в условиях ограниченного доступа к интернету.
+
+**Это информационный релиз. APK не публикуется.**
+EOF
+
+    if gh release view "$TAG" >/dev/null 2>&1; then
+        echo "ERROR: release $TAG уже существует" >&2
+        exit 1
+    fi
+
+    gh release create "$TAG" \
+        --title "$TITLE" \
+        --notes-file /tmp/cheburmail-final-notice.md
+
+    echo "✓ Финальное уведомление опубликовано: $TAG"
+    exit 0
+fi
 
 if [[ "$MODE" == "debug" ]]; then
     TAG="v${VERSION_CODE}-debug"
