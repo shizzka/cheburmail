@@ -1,0 +1,43 @@
+name: Publish final CheburMail notice
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/final-notice.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish-final-notice:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create final stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if gh release view v14 --repo "$REPO" >/dev/null 2>&1; then
+            echo "v14 already exists; nothing to do."
+            exit 0
+          fi
+
+          cat > /tmp/release-notes.md <<'EOF'
+          # CheburMail: поддержка прекращена
+
+          Разработка CheburMail остановлена. Проект остаётся открытым как proof of concept и часть портфолио.
+
+          Для практического использования рекомендуем перейти на **[Delta Chat](https://delta.chat/)** — зрелый open-source мессенджер, который также использует электронную почту как транспорт и лучше подходит для реального использования.
+
+          CheburMail создавался как аварийный канал связи поверх IMAP/SMTP в условиях ограниченного доступа к интернету. Спасибо всем, кто тестировал проект.
+
+          **Этот релиз информационный. APK не содержит новых функций.**
+          EOF
+
+          gh release create v14             --repo "$REPO"             --target "$TARGET_SHA"             --title "0.3.9 — поддержка прекращена → Delta Chat"             --notes-file /tmp/release-notes.md
