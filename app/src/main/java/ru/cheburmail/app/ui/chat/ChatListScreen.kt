@@ -96,12 +96,62 @@ fun ChatListScreen(
     val context = LocalContext.current
     var updateInfo by remember { mutableStateOf(UpdateChecker.getCached(context)) }
 
+    // Финальное уведомление о прекращении поддержки.
+    // Показываем один раз после установки v0.3.9.
+    val projectStatusPrefs = remember {
+        context.getSharedPreferences("project_status", android.content.Context.MODE_PRIVATE)
+    }
+    var showDiscontinuedNotice by remember {
+        mutableStateOf(!projectStatusPrefs.getBoolean("discontinued_notice_v14", false))
+    }
+
     // Проверяем при первом открытии (если кэш пустой или старый)
     LaunchedEffect(Unit) {
         val result = UpdateChecker.check(context)
         if (result != null) {
             updateInfo = result
         }
+    }
+
+    if (showDiscontinuedNotice) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Поддержка CheburMail прекращена") },
+            text = {
+                Text(
+                    "CheburMail больше не развивается. Для дальнейшего использования " +
+                        "рекомендуем Delta Chat — зрелый open-source мессенджер, который " +
+                        "также использует электронную почту как транспорт."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        projectStatusPrefs.edit()
+                            .putBoolean("discontinued_notice_v14", true)
+                            .apply()
+                        showDiscontinuedNotice = false
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse("https://delta.chat/"))
+                        )
+                    }
+                ) {
+                    Text("Открыть Delta Chat")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        projectStatusPrefs.edit()
+                            .putBoolean("discontinued_notice_v14", true)
+                            .apply()
+                        showDiscontinuedNotice = false
+                    }
+                ) {
+                    Text("Понятно")
+                }
+            }
+        )
     }
 
     // Диалог подтверждения удаления
